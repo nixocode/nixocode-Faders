@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>Faders</string>
+	<key>CFBundleDisplayName</key>
+	<string>Faders</string>
+	<key>CFBundleIdentifier</key>
+	<string>io.github.nixocode.Faders</string>
+	<key>CFBundleExecutable</key>
+	<string>Faders</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.4</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.utilities</string>
+
+	<!-- Menu bar only: no Dock icon, no app menu. -->
+	<key>LSUIElement</key>
+	<true/>
+
+	<!-- Shown when macOS asks permission. Needed to route an app's audio through Faders. -->
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Faders routes each app's sound through its volume slider so you can turn apps up or down individually. Audio is never recorded or saved.</string>
+
+	<key>NSHumanReadableCopyright</key>
+	<string>Open source under the MIT License.</string>
+</dict>
+</plist>
