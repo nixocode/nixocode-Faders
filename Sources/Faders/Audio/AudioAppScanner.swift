@@ -41,14 +41,14 @@ enum AudioAppScanner {
             else { continue }
 
             let bundleID = object.readString(kAudioProcessPropertyBundleID)
-            let isPlaying = (object.read(kAudioProcessPropertyIsRunningOutput, defaultValue: UInt32(0)) ?? 0) != 0
+            let playing = isPlaying([object])
             let owner = Owner.resolve(pid: pid, bundleID: bundleID, regularApps: regularApps)
 
             if owner.isSystemService { continue }
 
             var group = groups[owner.key] ?? (owner, [], false)
             group.objects.append(object)
-            group.playing = group.playing || isPlaying
+            group.playing = group.playing || playing
             groups[owner.key] = group
         }
 
@@ -63,6 +63,13 @@ enum AudioAppScanner {
                 )
             }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    /// True if any of these processes is outputting sound right now.
+    static func isPlaying(_ processObjectIDs: [AudioObjectID]) -> Bool {
+        processObjectIDs.contains { object in
+            (object.read(kAudioProcessPropertyIsRunningOutput, defaultValue: UInt32(0)) ?? 0) != 0
+        }
     }
 
     // MARK: - Working out which app a process belongs to

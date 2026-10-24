@@ -3,29 +3,32 @@ import SwiftUI
 
 /// The panel that drops down from the menu bar icon.
 ///
-///   ┌──────────────────────────────┐
-///   │ Faders                 Reset │
-///   │ OUTPUT                       │
-///   │ [🔈 MacBook Speakers ━━━● 🔊] │
-///   │ APPS                         │
-///   │ [🎵 Spotify ━━━━━●━━━━━ 🔊]   │
-///   │ [🌐 Safari  ━━━━━━━━●━━ 🔊]   │
-///   │ Open at Login · Settings · Quit │
-///   └──────────────────────────────┘
+///   ┌─────────────────────────────────┐
+///   │ Faders                Reset All │
+///   │ OUTPUT                          │
+///   │ [🎧 AirPods Pro  ━━━━●━━━━  🔊] │
+///   │ APPS                            │
+///   │ [🎵 Spotify      ━━●━━━━━━  🔊] │
+///   │ [🌐 Chrome       ━━━━━━●━━  🔊] │
+///   │ ◯ Open at Login   Settings Quit │
+///   └─────────────────────────────────┘
 struct MixerView: View {
     @Environment(MixerModel.self) private var mixer
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 16) {
             header
-            outputSection
-            appsSection
+            MixerSection("Output") { outputRow }
+            MixerSection("Apps") { appList }
             if mixer.permissionProblem { permissionHint }
-            Divider().opacity(0.5)
+            Divider().opacity(0.4)
             footer
         }
-        .padding(14)
+        .padding(16)
         .frame(width: 340)
+        // Size the panel to its content, so it shrinks when apps stop playing
+        // (instead of leaving empty glass behind).
+        .fixedSize(horizontal: false, vertical: true)
         .animation(.smooth(duration: 0.25), value: mixer.apps.map(\.id))
     }
 
@@ -38,16 +41,15 @@ struct MixerView: View {
             Spacer()
             Button("Reset All", action: mixer.resetAll)
                 .buttonStyle(.borderless)
-                .font(.system(size: 11))
+                .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
+                .disabled(!mixer.hasCustomLevels)
                 .help("Put every app back to 100%")
         }
     }
 
     @ViewBuilder
-    private var outputSection: some View {
-        SectionLabel("Output")
-
+    private var outputRow: some View {
         if let output = mixer.output, output.supportsVolume {
             VolumeRow(
                 title: output.name,
@@ -55,7 +57,7 @@ struct MixerView: View {
                 isMuted: mixer.outputMuted,
                 onToggleMute: { mixer.setOutputMuted(!mixer.outputMuted) }
             ) {
-                SymbolIcon(name: "hifispeaker.fill")
+                DeviceIcon(symbolName: output.symbolName)
             }
         } else {
             EmptyMessage(
@@ -66,9 +68,7 @@ struct MixerView: View {
     }
 
     @ViewBuilder
-    private var appsSection: some View {
-        SectionLabel("Apps")
-
+    private var appList: some View {
         if mixer.apps.isEmpty {
             EmptyMessage(symbol: "speaker.zzz", text: "No apps are playing sound")
         } else if mixer.apps.count <= 5 {
@@ -112,7 +112,7 @@ struct MixerView: View {
     }
 
     private var footer: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 14) {
             LaunchAtLoginToggle()
             Spacer()
             Button("Sound Settings…") {
@@ -129,28 +129,39 @@ struct MixerView: View {
 
 // MARK: - Small building blocks
 
-private struct SectionLabel: View {
-    let text: String
-    init(_ text: String) { self.text = text }
+/// A small caption ("OUTPUT", "APPS") with its content underneath.
+private struct MixerSection<Content: View>: View {
+    let title: String
+    @ViewBuilder var content: Content
+
+    init(_ title: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.content = content()
+    }
 
     var body: some View {
-        Text(text.uppercased())
-            .font(.system(size: 10, weight: .semibold))
-            .tracking(0.6)
-            .foregroundStyle(.secondary)
-            .padding(.bottom, -6)
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title.uppercased())
+                .font(.system(size: 10, weight: .semibold))
+                .tracking(0.6)
+                .foregroundStyle(.secondary)
+                .padding(.leading, 4)
+            content
+        }
     }
 }
 
-private struct SymbolIcon: View {
-    let name: String
+/// Round icon for the output device (AirPods, MacBook speakers…), sized like
+/// an app icon so the rows line up.
+private struct DeviceIcon: View {
+    let symbolName: String
 
     var body: some View {
-        Image(systemName: name)
-            .font(.system(size: 15, weight: .medium))
+        Image(systemName: symbolName)
+            .font(.system(size: 15, weight: .semibold))
             .foregroundStyle(.white)
-            .frame(width: 30, height: 30)
-            .background(Color.accentColor.gradient, in: .rect(cornerRadius: 8))
+            .frame(width: 32, height: 32)
+            .background(Color.accentColor.gradient, in: .circle)
     }
 }
 
@@ -177,7 +188,8 @@ private struct LaunchAtLoginToggle: View {
 
     var body: some View {
         Toggle("Open at Login", isOn: $isOn)
-            .toggleStyle(.checkbox)
+            .toggleStyle(.switch)
+            .controlSize(.mini)
             .onChange(of: isOn) { _, enabled in
                 do {
                     if enabled {

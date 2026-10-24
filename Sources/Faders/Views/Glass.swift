@@ -7,7 +7,7 @@ import SwiftUI
 
 extension View {
     /// Places the view on a rounded glass "platter", like a Control Center module.
-    func glassPlatter(cornerRadius: CGFloat = 16) -> some View {
+    func glassPlatter(cornerRadius: CGFloat = 18) -> some View {
         modifier(GlassPlatter(cornerRadius: cornerRadius))
     }
 }

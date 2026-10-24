@@ -35,9 +35,9 @@ struct VolumeRow<Icon: View>: View {
 
             MuteButton(isMuted: isMuted, volume: volume, action: onToggleMute)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .glassPlatter()
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
+        .glassPlatter(cornerRadius: 18)
     }
 }
 
@@ -55,13 +55,15 @@ private struct MuteButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: symbol, variableValue: Double(volume))
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(isMuted ? Color.secondary : Color.primary)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(isMuted ? Color.red : Color.secondary)
                 .frame(width: 28, height: 28)
                 .contentShape(Circle())
+                .contentTransition(.symbolEffect(.replace))
         }
         .buttonStyle(.plain)
-        .background(.quaternary.opacity(isMuted ? 1 : 0.6), in: Circle())
+        // Quiet by default; turns red when muted so it's obvious at a glance.
+        .background(isMuted ? AnyShapeStyle(Color.red.opacity(0.15)) : AnyShapeStyle(HierarchicalShapeStyle.quinary), in: Circle())
         .help(isMuted ? "Unmute" : "Mute")
         .accessibilityLabel(isMuted ? "Unmute" : "Mute")
     }

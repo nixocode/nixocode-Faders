@@ -55,6 +55,8 @@ App ──► process tap ──► × your volume ──► speakers / headphon
 
 Apps you never touch are left completely alone, and **Reset All** removes every tap and returns all apps to normal.
 
+**About the purple dot.** While a tap is active, macOS shows a purple privacy dot in the menu bar (it means "an app is capturing audio"). Faders never records anything, and it keeps the dot off as much as possible: it only taps an app while that app is actually playing, and lets go after 3 seconds of silence.
+
 ## Project layout
 
 The code is small and commented — start with `MixerModel.swift`.

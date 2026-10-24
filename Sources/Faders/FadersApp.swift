@@ -16,5 +16,7 @@ struct FadersApp: App {
         // `.window` gives us a real panel (like Control Center modules)
         // instead of a plain dropdown menu.
         .menuBarExtraStyle(.window)
+        // Let the panel grow and shrink with its content.
+        .windowResizability(.contentSize)
     }
 }

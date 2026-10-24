@@ -25,6 +25,32 @@ struct OutputDevice: Equatable {
         return OutputDevice(id: id, name: name, uid: uid)
     }
 
+    // MARK: Icon
+
+    /// An SF Symbol that looks like the device: AirPods, headphones, a MacBook…
+    var symbolName: String {
+        let lowercasedName = name.lowercased()
+        let transport = id.read(kAudioDevicePropertyTransportType, defaultValue: UInt32(0)) ?? 0
+
+        switch transport {
+        case kAudioDeviceTransportTypeBluetooth, kAudioDeviceTransportTypeBluetoothLE:
+            if lowercasedName.contains("airpods max") { return "airpodsmax" }
+            if lowercasedName.contains("airpods pro") { return "airpodspro" }
+            if lowercasedName.contains("airpods") { return "airpods" }
+            if lowercasedName.contains("beats") { return "beats.headphones" }
+            return "headphones"
+        case kAudioDeviceTransportTypeBuiltIn:
+            if lowercasedName.contains("headphone") { return "headphones" }
+            return lowercasedName.contains("macbook") ? "laptopcomputer" : "desktopcomputer"
+        case kAudioDeviceTransportTypeHDMI, kAudioDeviceTransportTypeDisplayPort:
+            return "display"
+        case kAudioDeviceTransportTypeAirPlay:
+            return "airplayaudio"
+        default:
+            return "hifispeaker.fill"
+        }
+    }
+
     // MARK: Volume
 
     /// Some outputs (many HDMI/DisplayPort monitors) have no software volume.
