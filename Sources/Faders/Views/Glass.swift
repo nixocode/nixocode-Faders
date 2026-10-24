@@ -1,6 +1,7 @@
 import SwiftUI
 
-// Liquid Glass on macOS 26 Tahoe, with a frosted fallback on macOS 14–15.
+// Liquid Glass on macOS 26 Tahoe and macOS 27 Golden Gate (the glass APIs
+// arrived in 26), with a frosted fallback on macOS 14–15.
 // Keeping the version check in one place means the rest of the UI never has
 // to think about it.
 
@@ -23,7 +24,7 @@ private struct GlassPlatter: ViewModifier {
     }
 }
 
-/// Groups glass platters so macOS 26 renders them together (faster, and they
+/// Groups glass platters so macOS 26+ renders them together (faster, and they
 /// blend smoothly when close). A plain stack on older systems.
 struct GlassGroup<Content: View>: View {
     var spacing: CGFloat = 8

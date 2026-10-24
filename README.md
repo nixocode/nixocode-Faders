@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>The volume mixer macOS never had.</b><br>
-  Turn each app up or down from the menu bar — like the Windows Volume Mixer, redesigned for macOS Tahoe's Liquid Glass.
+  Turn each app up or down from the menu bar — like the Windows Volume Mixer, redesigned for the Liquid Glass look of macOS 27 Golden Gate.
 </p>
 
 <p align="center">
@@ -24,7 +24,7 @@
 - **Master volume** for your current speakers or headphones, right on top.
 - **Remembers your levels** — set Slack to 30% once and it stays there.
 - **Follows your output** — plug in headphones or switch to AirPods and everything keeps working.
-- **Liquid Glass design** on macOS 26, with a clean frosted look on macOS 14–15.
+- **Liquid Glass design** on macOS 27 Golden Gate (and macOS 26 Tahoe), with a clean frosted look on macOS 14–15.
 - **Lightweight & private** — no Dock icon, no network access, no audio is ever recorded or saved.
 - **Free and open source** (MIT).
 
@@ -39,7 +39,7 @@ The first time you lower an app's volume, macOS asks for permission to access ap
 
 > **Tip:** Hold <kbd>⌘</kbd> and drag the icon in the menu bar to put it right next to Control Center. Turn on **Open at Login** in the panel so it's always there.
 
-**Requirements:** macOS 14.4 Sonoma or newer. Liquid Glass styling appears on macOS 26 Tahoe.
+**Requirements:** macOS 14.4 Sonoma or newer. Built for macOS 27 Golden Gate; Liquid Glass styling appears on macOS 26 and later.
 
 ## How it works
 
@@ -79,7 +79,7 @@ Sources/Faders/
 You need **Xcode 26** (or newer) on macOS.
 
 ```bash
-git clone https://github.com/nixocode/Faders.git
+git clone https://github.com/nixocode/nixocode-Faders.git Faders
 cd Faders
 ./scripts/build-app.sh      # → build/Faders.app
 open build/Faders.app

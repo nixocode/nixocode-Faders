@@ -20,7 +20,8 @@ extension AudioObjectID {
     // MARK: Reading
 
     /// Reads a single fixed-size value (an integer, a float, an object ID…).
-    func read<T>(
+    /// For text, use `readString` instead.
+    func read<T: BitwiseCopyable>(
         _ selector: AudioObjectPropertySelector,
         scope: AudioObjectPropertyScope = kAudioObjectPropertyScopeGlobal,
         defaultValue: T
@@ -28,12 +29,14 @@ extension AudioObjectID {
         var address = AudioObjectPropertyAddress(selector, scope)
         var value = defaultValue
         var size = UInt32(MemoryLayout<T>.size)
-        let status = AudioObjectGetPropertyData(self, &address, 0, nil, &size, &value)
+        let status = withUnsafeMutableBytes(of: &value) { buffer in
+            AudioObjectGetPropertyData(self, &address, 0, nil, &size, buffer.baseAddress!)
+        }
         return status == noErr ? value : nil
     }
 
     /// Reads a list of values, such as "every audio process on the system".
-    func readArray<T>(
+    func readArray<T: BitwiseCopyable>(
         _ selector: AudioObjectPropertySelector,
         scope: AudioObjectPropertyScope = kAudioObjectPropertyScopeGlobal,
         defaultValue: T
@@ -45,8 +48,10 @@ extension AudioObjectID {
         guard AudioObjectGetPropertyDataSize(self, &address, 0, nil, &size) == noErr else { return [] }
 
         var items = [T](repeating: defaultValue, count: Int(size) / MemoryLayout<T>.stride)
-        guard AudioObjectGetPropertyData(self, &address, 0, nil, &size, &items) == noErr else { return [] }
-        return items
+        let status = items.withUnsafeMutableBytes { buffer in
+            AudioObjectGetPropertyData(self, &address, 0, nil, &size, buffer.baseAddress!)
+        }
+        return status == noErr ? items : []
     }
 
     /// Reads a text property (names, unique IDs, bundle identifiers).
@@ -54,9 +59,15 @@ extension AudioObjectID {
         _ selector: AudioObjectPropertySelector,
         scope: AudioObjectPropertyScope = kAudioObjectPropertyScopeGlobal
     ) -> String? {
-        guard let value = read(selector, scope: scope, defaultValue: "" as CFString) else { return nil }
-        let string = value as String
-        return string.isEmpty ? nil : string
+        var address = AudioObjectPropertyAddress(selector, scope)
+        // Core Audio hands back a CFString we own, so take it with `takeRetainedValue`.
+        var value: Unmanaged<CFString>?
+        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        let status = withUnsafeMutableBytes(of: &value) { buffer in
+            AudioObjectGetPropertyData(self, &address, 0, nil, &size, buffer.baseAddress!)
+        }
+        guard status == noErr, let string = value?.takeRetainedValue() as String?, !string.isEmpty else { return nil }
+        return string
     }
 
     /// Returns true if this object has the given property at all
@@ -73,15 +84,17 @@ extension AudioObjectID {
 
     /// Writes a single fixed-size value. Returns false if the device refused it.
     @discardableResult
-    func write<T>(
+    func write<T: BitwiseCopyable>(
         _ selector: AudioObjectPropertySelector,
         scope: AudioObjectPropertyScope = kAudioObjectPropertyScopeGlobal,
         value: T
     ) -> Bool {
         var address = AudioObjectPropertyAddress(selector, scope)
-        var value = value
         let size = UInt32(MemoryLayout<T>.size)
-        return AudioObjectSetPropertyData(self, &address, 0, nil, size, &value) == noErr
+        let status = withUnsafeBytes(of: value) { buffer in
+            AudioObjectSetPropertyData(self, &address, 0, nil, size, buffer.baseAddress!)
+        }
+        return status == noErr
     }
 }
 
