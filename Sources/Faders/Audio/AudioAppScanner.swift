@@ -44,6 +44,8 @@ enum AudioAppScanner {
             let isPlaying = (object.read(kAudioProcessPropertyIsRunningOutput, defaultValue: UInt32(0)) ?? 0) != 0
             let owner = Owner.resolve(pid: pid, bundleID: bundleID, regularApps: regularApps)
 
+            if owner.isSystemService { continue }
+
             var group = groups[owner.key] ?? (owner, [], false)
             group.objects.append(object)
             group.playing = group.playing || isPlaying
@@ -69,6 +71,10 @@ enum AudioAppScanner {
         let key: String
         let name: String
         let icon: NSImage
+        /// True for Apple's invisible background services (Siri's CoreSpeech,
+        /// dictation, notification sounds…). They hold audio connections open
+        /// but aren't things you'd want a slider for, so the mixer hides them.
+        var isSystemService = false
 
         static func resolve(pid: pid_t, bundleID: String?, regularApps: [NSRunningApplication]) -> Owner {
             // 1. The process *is* a normal app (Spotify, Music, Zoom…).
@@ -85,11 +91,21 @@ enum AudioAppScanner {
                 return Owner(app: parent, fallbackKey: bundleID)
             }
 
-            // 3. Anything else (system services, command-line tools): show it as-is.
+            // 3. Anything else: a background service or a command-line tool.
             let app = NSRunningApplication(processIdentifier: pid)
             let name = app?.localizedName ?? bundleID?.components(separatedBy: ".").last ?? "Process \(pid)"
             let icon = app?.icon ?? NSImage(systemSymbolName: "app.dashed", accessibilityDescription: nil) ?? NSImage()
-            return Owner(key: bundleID ?? "pid-\(pid)", name: name, icon: icon)
+            var owner = Owner(key: bundleID ?? "pid-\(pid)", name: name, icon: icon)
+            owner.isSystemService = isAppleBackgroundService(bundleID)
+            return owner
+        }
+
+        /// Apple's own background processes have bundle IDs starting with
+        /// "com.apple.". WebKit is the exception: it plays the sound of web pages
+        /// in Safari and other apps, so it stays visible.
+        private static func isAppleBackgroundService(_ bundleID: String?) -> Bool {
+            guard let bundleID, bundleID.hasPrefix("com.apple.") else { return false }
+            return !bundleID.hasPrefix("com.apple.WebKit")
         }
 
         private init(key: String, name: String, icon: NSImage) {

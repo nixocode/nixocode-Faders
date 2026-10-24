@@ -93,6 +93,7 @@ Every push is built automatically on GitHub's macOS runners — see the **Action
 
 - Very new or unusual output devices with more than 2 channels may not route correctly while an app is turned down. Reset the app to 100% to restore normal audio.
 - Some apps play sound through a shared system process (for example Safari's web content via WebKit). Those appear under the process's own name.
+- Apple's background services (Siri, dictation and similar) are hidden on purpose — they keep audio connections open but aren't apps you'd want a slider for.
 - Apps with their own exclusive audio engines (pro audio software) may ignore taps.
 
 ## Contributing
