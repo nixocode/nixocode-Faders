@@ -87,7 +87,7 @@ open build/Faders.app
 
 Or open `Package.swift` in Xcode and press **Run**. (When running from Xcode the permission prompt may not appear; use the built `.app` to test per-app volume.)
 
-Every push is built automatically on GitHub's macOS runners — see the **Actions** tab. Pushing a tag such as `v1.0.1` publishes a new release.
+Every push is built automatically on GitHub's macOS runners — see the **Actions** tab. Pushes to `main` publish the release for the version in `Support/Info.plist`; bump `CFBundleShortVersionString` to ship a new one.
 
 ## Known limitations
 
