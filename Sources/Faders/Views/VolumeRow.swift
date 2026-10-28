@@ -39,7 +39,7 @@ struct VolumeRow<Icon: View>: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 11)
-        .glassPlatter(cornerRadius: 18)
+        .rowBackground()
     }
 }
 

@@ -27,7 +27,7 @@ struct MixerView: View {
         .padding(16)
         .frame(width: 340)
         // Size the panel to its content, so it shrinks when apps stop playing
-        // (instead of leaving empty glass behind).
+        // (instead of leaving an empty gap behind).
         .fixedSize(horizontal: false, vertical: true)
         .animation(.smooth(duration: 0.25), value: mixer.apps.map(\.id))
     }
@@ -83,7 +83,7 @@ struct MixerView: View {
     }
 
     private var appRows: some View {
-        GlassGroup {
+        VStack(spacing: 8) {
             ForEach(mixer.apps) { app in
                 VolumeRow(
                     title: app.name,
@@ -178,7 +178,7 @@ private struct EmptyMessage: View {
         }
         .foregroundStyle(.secondary)
         .padding(12)
-        .glassPlatter()
+        .rowBackground()
     }
 }
 
