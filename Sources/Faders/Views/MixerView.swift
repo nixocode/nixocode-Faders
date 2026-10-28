@@ -14,6 +14,8 @@ import SwiftUI
 ///   └─────────────────────────────────┘
 struct MixerView: View {
     @Environment(MixerModel.self) private var mixer
+    /// True exactly while the panel is open: it's the key window then.
+    @Environment(\.appearsActive) private var isOpen
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -30,6 +32,9 @@ struct MixerView: View {
         // (instead of leaving an empty gap behind).
         .fixedSize(horizontal: false, vertical: true)
         .animation(.smooth(duration: 0.25), value: mixer.apps.map(\.id))
+        // Not onAppear/onDisappear: `MenuBarExtra` keeps this view alive between
+        // openings, so they fire once and never, respectively.
+        .onChange(of: isOpen, initial: true) { _, isOpen in mixer.isPanelOpen = isOpen }
     }
 
     // MARK: - Sections

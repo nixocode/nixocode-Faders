@@ -35,6 +35,12 @@ final class MixerModel {
     /// True if any app is set to something other than 100% (enables "Reset All").
     var hasCustomLevels: Bool { settings.values.contains { $0.isCustom } }
 
+    /// Set by the panel while it's on screen. Rows then stay put when their app
+    /// goes quiet (see `refresh`), and drop out once the panel closes.
+    @ObservationIgnored var isPanelOpen = false {
+        didSet { if !isPanelOpen { refresh() } }
+    }
+
     // MARK: Tuning
 
     /// How long an app must be silent before we let go of it.
@@ -155,12 +161,19 @@ final class MixerModel {
 
     private func refresh() {
         // 1. Apps. Show apps that are playing, plus apps with a custom level so
-        //    you can still adjust them while they're paused.
+        //    you can still adjust them while they're paused. While the panel is
+        //    open, rows also stay when their app goes quiet (a pause, the gap
+        //    between two songs): a row shouldn't vanish from under the pointer,
+        //    and the panel can't animate its height, so it would jump.
         let now = Date()
         let scanned = AudioAppScanner.scan()
         for app in scanned where app.isPlaying { lastActive[app.id] = now }
 
-        let visible = scanned.filter { $0.isPlaying || settings[$0.id]?.isCustom == true || taps[$0.id] != nil }
+        let listed = Set(apps.map(\.id))
+        let visible = scanned.filter {
+            $0.isPlaying || settings[$0.id]?.isCustom == true || taps[$0.id] != nil
+                || (isPanelOpen && listed.contains($0.id))
+        }
         if visible != apps { apps = visible }
 
         // 2. Taps.
