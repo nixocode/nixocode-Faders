@@ -12,7 +12,7 @@ import os
 ///   2. Wrap the tap in a private **aggregate device** that also contains the real
 ///      output (your speakers/headphones).
 ///   3. Run a tiny **render callback** on that device that copies the tapped audio to
-///      the output, multiplied by our volume.
+///      the output, multiplied by our volume (see `TapRenderer`).
 ///
 ///     App ──► Process tap ──► [ × volume ] ──► Speakers
 ///
@@ -21,8 +21,13 @@ import os
 final class AppVolumeTap {
 
     let processObjectIDs: [AudioObjectID]
-    private let renderer: TapRenderer
 
+    /// 0.0 = silent, 1.0 = the app's normal level.
+    var volume: Float {
+        didSet { renderer?.targetGain = min(max(volume, 0), 1) }
+    }
+
+    private var renderer: TapRenderer?
     private var tapID = AudioObjectID.unknown
     private let tapUUID = UUID()
     private var aggregateDeviceID = AudioObjectID.unknown
@@ -34,12 +39,15 @@ final class AppVolumeTap {
     /// (most commonly because the user denied the audio-capture permission).
     init?(appName: String, processObjectIDs: [AudioObjectID], output: OutputDevice, volume: Float) {
         self.processObjectIDs = processObjectIDs
-        renderer = TapRenderer(gain: min(max(volume, 0), 1))
+        self.volume = volume
 
         do {
             try createTap(appName: appName)
             try createAggregateDevice(appName: appName, output: output)
-            try startRendering()
+            let layout = try readLayout(appName: appName, output: output)
+            let renderer = TapRenderer(gain: min(max(volume, 0), 1), layout: layout)
+            self.renderer = renderer
+            try startRendering(with: renderer)
         } catch {
             Self.log.error("Could not control \(appName, privacy: .public): \(error.localizedDescription, privacy: .public)")
             stop()
@@ -48,12 +56,6 @@ final class AppVolumeTap {
     }
 
     deinit { stop() }
-
-    /// 0.0 = silent, 1.0 = the app's normal level. Safe to call from the main thread.
-    var volume: Float {
-        get { renderer.targetGain }
-        set { renderer.targetGain = min(max(newValue, 0), 1) }
-    }
 
     // MARK: - Setup steps
 
@@ -76,6 +78,11 @@ final class AppVolumeTap {
             kAudioAggregateDeviceIsPrivateKey: true,      // hidden from Sound settings
             kAudioAggregateDeviceIsStackedKey: false,
             kAudioAggregateDeviceTapAutoStartKey: true,
+            // The aggregate runs on the output's clock and at its sample rate, and
+            // with drift compensation on, Core Audio resamples the tap to match.
+            // Measured on macOS 27 with a 48 kHz tap on 44.1 kHz speakers: 512 tap
+            // frames arrive with every 512 output frames, and the output's rate can
+            // even change mid-playback. So the renderer never sees two rates.
             kAudioAggregateDeviceMainSubDeviceKey: output.uid,
             kAudioAggregateDeviceSubDeviceListKey: [
                 [kAudioSubDeviceUIDKey: output.uid],
@@ -91,8 +98,53 @@ final class AppVolumeTap {
         )
     }
 
-    private func startRendering() throws {
-        let renderer = self.renderer   // capture only the renderer, never `self`, on the audio thread
+    /// Works out where the tap's audio arrives and where it should go, and checks
+    /// that both sides use float samples (the renderer's only format).
+    ///
+    /// If the output device has a microphone (AirPods, USB headsets), the
+    /// aggregate device includes its input streams ahead of the tap's, and keeps
+    /// them running: neither `kAudioDevicePropertyIOProcStreamUsage` nor
+    /// `kAudioSubDeviceInputChannelsKey` switches them off (both tried on
+    /// macOS 27). The renderer simply never reads them.
+    private func readLayout(appName: String, output: OutputDevice) throws -> RenderLayout {
+        let tapFormat = tapID.read(kAudioTapPropertyFormat, defaultValue: AudioStreamBasicDescription())
+        let deviceInputs = output.id.streamFormats(scope: kAudioObjectPropertyScopeInput)
+        let inputs = aggregateDeviceID.streamFormats(scope: kAudioObjectPropertyScopeInput)
+        let outputs = aggregateDeviceID.streamFormats(scope: kAudioObjectPropertyScopeOutput)
+        let preferredStereo = output.id.readArray(
+            kAudioDevicePropertyPreferredChannelsForStereo,
+            scope: kAudioObjectPropertyScopeOutput,
+            defaultValue: UInt32(0)
+        )
+
+        // Note: the tap's input stream reports the tap's own rate (e.g. 48 kHz) even
+        // though the data it delivers has already been resampled to the output's.
+        Self.log.info("""
+            \(appName, privacy: .public): tap \(tapFormat?.summary ?? "unknown", privacy: .public); \
+            inputs [\(inputs.map(\.summary).joined(separator: " | "), privacy: .public)] \
+            (first \(deviceInputs.count) belong to the device); \
+            outputs [\(outputs.map(\.summary).joined(separator: " | "), privacy: .public)]; \
+            stereo pair \(preferredStereo, privacy: .public)
+            """)
+
+        guard let layout = RenderLayout(
+            deviceInputStreams: deviceInputs.count,
+            aggregateInputStreams: inputs.count,
+            outputChannels: outputs.reduce(0) { $0 + Int($1.mChannelsPerFrame) },
+            preferredStereo: preferredStereo
+        ) else {
+            throw TapError(step: "find the tap's audio (\(inputs.count) inputs, \(outputs.count) outputs)", status: noErr)
+        }
+
+        let tapStreams = inputs[layout.tapBuffers]
+        guard tapStreams.allSatisfy(\.isFloat32), outputs.allSatisfy(\.isFloat32) else {
+            throw TapError(step: "use this audio format (\(outputs.first?.summary ?? "no output"))", status: noErr)
+        }
+        return layout
+    }
+
+    private func startRendering(with renderer: TapRenderer) throws {
+        // Capture only the renderer, never `self`, on the audio thread.
         let queue = DispatchQueue(label: "Faders.render", qos: .userInteractive)
 
         try check(
@@ -128,7 +180,9 @@ final class AppVolumeTap {
     private struct TapError: LocalizedError {
         let step: String
         let status: OSStatus
-        var errorDescription: String? { "Failed to \(step) (OSStatus \(status))" }
+        var errorDescription: String? {
+            status == noErr ? "Failed to \(step)" : "Failed to \(step) (OSStatus \(status))"
+        }
     }
 
     private func check(_ status: OSStatus, _ step: String) throws {
