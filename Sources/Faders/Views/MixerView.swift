@@ -16,6 +16,7 @@ struct MixerView: View {
     @Environment(MixerModel.self) private var mixer
     /// True exactly while the panel is open: it's the key window then.
     @Environment(\.appearsActive) private var isOpen
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -100,7 +101,7 @@ struct MixerView: View {
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                 }
-                .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.96)))
             }
         }
     }

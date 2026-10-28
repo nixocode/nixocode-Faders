@@ -11,6 +11,8 @@ struct VolumeRow<Icon: View>: View {
     var onEditingChanged: (Bool) -> Void = { _ in }
     @ViewBuilder var icon: Icon
 
+    private var percent: Int { Int((volume * 100).rounded()) }
+
     var body: some View {
         HStack(spacing: 12) {
             icon
@@ -23,7 +25,7 @@ struct VolumeRow<Icon: View>: View {
                         .font(.body.weight(.semibold))
                         .lineLimit(1)
                     Spacer(minLength: 4)
-                    Text(isMuted ? "Muted" : "\(Int((volume * 100).rounded()))%")
+                    Text(isMuted ? "Muted" : "\(percent)%")
                         .font(.subheadline.weight(.medium).monospacedDigit())
                         .foregroundStyle(.secondary)
                         .contentTransition(.numericText())
@@ -33,6 +35,7 @@ struct VolumeRow<Icon: View>: View {
                     .controlSize(.small)
                     .disabled(isMuted)
                     .accessibilityLabel("\(title) volume")
+                    .accessibilityValue(isMuted ? "Muted" : "\(percent) percent")
             }
 
             MuteButton(isMuted: isMuted, volume: volume, action: onToggleMute)
@@ -40,6 +43,22 @@ struct VolumeRow<Icon: View>: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 11)
         .rowBackground()
+        // The keyboard reaches whole rows with Tab, even with macOS's "Keyboard
+        // navigation" off (the default), which otherwise keeps sliders and
+        // buttons out of reach. ← → change the level and M mutes.
+        .focusable()
+        .onKeyPress(.leftArrow) { nudge(by: -0.05) }
+        .onKeyPress(.rightArrow) { nudge(by: 0.05) }
+        .onKeyPress("m") {
+            onToggleMute()
+            return .handled
+        }
+    }
+
+    private func nudge(by step: Float) -> KeyPress.Result {
+        guard !isMuted else { return .ignored }
+        volume = min(max(volume + step, 0), 1)
+        return .handled
     }
 }
 
@@ -67,7 +86,10 @@ private struct MuteButton: View {
         // Quiet by default, a shade stronger when muted, like a toggle that's on.
         // (Not red: on macOS red means an error or a destructive action.)
         .background(isMuted ? AnyShapeStyle(.fill.secondary) : AnyShapeStyle(.fill.tertiary), in: Circle())
-        .help(isMuted ? "Unmute" : "Mute")
-        .accessibilityLabel(isMuted ? "Unmute" : "Mute")
+        .help(isMuted ? "Unmute (M)" : "Mute (M)")
+        // A toggle to VoiceOver ("Mute, on"), not a button whose name flips.
+        .accessibilityLabel("Mute")
+        .accessibilityValue(isMuted ? "On" : "Off")
+        .accessibilityAddTraits(.isToggle)
     }
 }
