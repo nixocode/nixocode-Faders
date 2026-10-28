@@ -7,6 +7,8 @@ struct VolumeRow<Icon: View>: View {
     @Binding var volume: Float
     let isMuted: Bool
     let onToggleMute: () -> Void
+    /// Told when a drag on the slider starts (true) and ends (false).
+    var onEditingChanged: (Bool) -> Void = { _ in }
     @ViewBuilder var icon: Icon
 
     var body: some View {
@@ -27,7 +29,7 @@ struct VolumeRow<Icon: View>: View {
                         .contentTransition(.numericText())
                 }
 
-                Slider(value: $volume, in: 0...1)
+                Slider(value: $volume, in: 0...1, onEditingChanged: onEditingChanged)
                     .controlSize(.small)
                     .disabled(isMuted)
                     .accessibilityLabel("\(title) volume")

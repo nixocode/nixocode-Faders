@@ -56,10 +56,25 @@ final class MixerModel {
 
     @ObservationIgnored private var timers: [Timer] = []
 
-    init() {
-        refresh()
+    /// Tells us when the default output device changes (AirPods connected…).
+    @ObservationIgnored private var outputDeviceListener: PropertyListener?
 
-        // Full refresh once a second: output device, app list, tap housekeeping.
+    /// Tell us when the current device's volume or mute changes — from the volume
+    /// keys, Control Center, or another app. Replaced whenever the device changes.
+    @ObservationIgnored private var outputLevelListeners: [PropertyListener] = []
+
+    /// True while the user drags the output slider. The device reports every
+    /// change we make back to us; applying those echoes mid-drag would make the
+    /// knob stutter, so we hold them until the drag ends.
+    @ObservationIgnored private var isAdjustingOutputVolume = false
+
+    init() {
+        outputDeviceListener = PropertyListener(.system, kAudioHardwarePropertyDefaultOutputDevice) { [weak self] in
+            self?.outputDeviceChanged()
+        }
+        outputDeviceChanged()   // also does the first refresh
+
+        // Refresh once a second: app list and tap housekeeping.
         timers.append(Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         })
@@ -102,6 +117,12 @@ final class MixerModel {
         outputMuted = muted
     }
 
+    /// Called when a drag on the output slider starts and ends.
+    func setAdjustingOutputVolume(_ adjusting: Bool) {
+        isAdjustingOutputVolume = adjusting
+        if !adjusting { readOutputLevels() }   // settle on what the device actually chose
+    }
+
     /// Puts every app back to 100% and removes all taps.
     func resetAll() {
         settings.removeAll()
@@ -120,19 +141,30 @@ final class MixerModel {
 
     // MARK: - Keeping everything in sync
 
-    private func refresh() {
-        // 1. Output device. If it changed (e.g. AirPods connected), every tap is
-        //    still pointing at the old one. Release them; step 3 re-creates the
-        //    ones still needed against the new device.
+    /// The default output device changed (or we just launched).
+    private func outputDeviceChanged() {
         let newOutput = OutputDevice.current()
-        if newOutput != output {
-            output = newOutput
-            releaseAllTaps()
-        }
-        outputVolume = output?.volume ?? 0
-        outputMuted = output?.isMuted ?? false
+        guard newOutput != output || outputLevelListeners.isEmpty else { return }
+        output = newOutput
 
-        // 2. Apps. Show apps that are playing, plus apps with a custom level so
+        // Listen to the new device's volume and mute (the old listeners go away
+        // with the array they're replaced in).
+        outputLevelListeners = newOutput?.observeLevels { [weak self] in self?.readOutputLevels() } ?? []
+        readOutputLevels()
+
+        // Every tap still points at the old device. Release them; `refresh`
+        // re-creates the ones still needed against the new device.
+        releaseAllTaps()
+        refresh()
+    }
+
+    private func readOutputLevels() {
+        if !isAdjustingOutputVolume { outputVolume = output?.volume ?? 0 }
+        outputMuted = output?.isMuted ?? false
+    }
+
+    private func refresh() {
+        // 1. Apps. Show apps that are playing, plus apps with a custom level so
         //    you can still adjust them while they're paused.
         let now = Date()
         let scanned = AudioAppScanner.scan()
@@ -141,7 +173,7 @@ final class MixerModel {
         let visible = scanned.filter { $0.isPlaying || settings[$0.id]?.isCustom == true || taps[$0.id] != nil }
         if visible != apps { apps = visible }
 
-        // 3. Taps.
+        // 2. Taps.
         let scannedByID = Dictionary(scanned.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
 
         for (id, tap) in taps {

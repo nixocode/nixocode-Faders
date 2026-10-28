@@ -86,4 +86,14 @@ struct OutputDevice: Equatable {
             id.write(kAudioDevicePropertyMute, scope: kAudioDevicePropertyScopeOutput, value: UInt32(newValue ? 1 : 0))
         }
     }
+
+    // MARK: Change notifications
+
+    /// Listeners that fire when this device's volume or mute changes — from the
+    /// volume keys, Control Center or another app. Updates stop when they're released.
+    func observeLevels(_ onChange: @escaping @MainActor () -> Void) -> [PropertyListener] {
+        [kAudioHardwareServiceDeviceProperty_VirtualMainVolume, kAudioDevicePropertyMute].map { selector in
+            PropertyListener(id, selector, scope: kAudioDevicePropertyScopeOutput, onChange: onChange)
+        }
+    }
 }

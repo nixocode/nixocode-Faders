@@ -55,7 +55,8 @@ struct MixerView: View {
                 title: output.name,
                 volume: Binding(get: { mixer.outputVolume }, set: { mixer.setOutputVolume($0) }),
                 isMuted: mixer.outputMuted,
-                onToggleMute: { mixer.setOutputMuted(!mixer.outputMuted) }
+                onToggleMute: { mixer.setOutputMuted(!mixer.outputMuted) },
+                onEditingChanged: mixer.setAdjustingOutputVolume
             ) {
                 DeviceIcon(symbolName: output.symbolName)
             }
