@@ -37,11 +37,11 @@ struct MixerView: View {
     private var header: some View {
         HStack {
             Text("Faders")
-                .font(.system(size: 15, weight: .bold, design: .rounded))
+                .font(.headline)
             Spacer()
             Button("Reset All", action: mixer.resetAll)
                 .buttonStyle(.borderless)
-                .font(.system(size: 11, weight: .medium))
+                .controlSize(.small)
                 .foregroundStyle(.secondary)
                 .disabled(!mixer.hasCustomLevels)
                 .help("Put every app back to 100%")
@@ -106,7 +106,7 @@ struct MixerView: View {
             NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AudioCapture")!)
         } label: {
             Label("Allow Faders to control app audio in System Settings", systemImage: "lock.shield")
-                .font(.system(size: 11))
+                .font(.subheadline)
                 .multilineTextAlignment(.leading)
         }
         .buttonStyle(.link)
@@ -123,14 +123,14 @@ struct MixerView: View {
                 .keyboardShortcut("q")
         }
         .buttonStyle(.borderless)
-        .font(.system(size: 11))
+        .font(.subheadline)
         .foregroundStyle(.secondary)
     }
 }
 
 // MARK: - Small building blocks
 
-/// A small caption ("OUTPUT", "APPS") with its content underneath.
+/// A small-caps caption ("Output", "Apps") with its content underneath.
 private struct MixerSection<Content: View>: View {
     let title: String
     @ViewBuilder var content: Content
@@ -142,9 +142,8 @@ private struct MixerSection<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title.uppercased())
-                .font(.system(size: 10, weight: .semibold))
-                .tracking(0.6)
+            Text(title)
+                .font(.caption.weight(.semibold).smallCaps())
                 .foregroundStyle(.secondary)
                 .padding(.leading, 4)
             content
@@ -162,7 +161,7 @@ private struct DeviceIcon: View {
             .font(.system(size: 15, weight: .semibold))
             .foregroundStyle(.white)
             .frame(width: 32, height: 32)
-            .background(Color.accentColor.gradient, in: .circle)
+            .background(Color.accentColor, in: .circle)
     }
 }
 
@@ -173,7 +172,7 @@ private struct EmptyMessage: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: symbol).font(.system(size: 15))
-            Text(text).font(.system(size: 12))
+            Text(text).font(.callout)
             Spacer()
         }
         .foregroundStyle(.secondary)

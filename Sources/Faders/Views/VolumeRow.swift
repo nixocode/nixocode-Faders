@@ -20,11 +20,11 @@ struct VolumeRow<Icon: View>: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline) {
                     Text(title)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.body.weight(.semibold))
                         .lineLimit(1)
                     Spacer(minLength: 4)
                     Text(isMuted ? "Muted" : "\(Int((volume * 100).rounded()))%")
-                        .font(.system(size: 11, weight: .medium).monospacedDigit())
+                        .font(.subheadline.weight(.medium).monospacedDigit())
                         .foregroundStyle(.secondary)
                         .contentTransition(.numericText())
                 }
@@ -58,14 +58,15 @@ private struct MuteButton: View {
         Button(action: action) {
             Image(systemName: symbol, variableValue: Double(volume))
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(isMuted ? Color.red : Color.secondary)
+                .foregroundStyle(isMuted ? .primary : .secondary)
                 .frame(width: 28, height: 28)
                 .contentShape(Circle())
                 .contentTransition(.symbolEffect(.replace))
         }
         .buttonStyle(.plain)
-        // Quiet by default; turns red when muted so it's obvious at a glance.
-        .background(isMuted ? AnyShapeStyle(Color.red.opacity(0.15)) : AnyShapeStyle(HierarchicalShapeStyle.quinary), in: Circle())
+        // Quiet by default, a shade stronger when muted, like a toggle that's on.
+        // (Not red: on macOS red means an error or a destructive action.)
+        .background(isMuted ? AnyShapeStyle(.fill.secondary) : AnyShapeStyle(.fill.tertiary), in: Circle())
         .help(isMuted ? "Unmute" : "Mute")
         .accessibilityLabel(isMuted ? "Unmute" : "Mute")
     }
