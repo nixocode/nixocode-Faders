@@ -54,7 +54,8 @@ final class MixerModel {
     /// Apps we failed to control; we don't retry them every second.
     @ObservationIgnored private var failedAppIDs: Set<String> = []
 
-    @ObservationIgnored private var timers: [Timer] = []
+    /// Tells us the moment an app starts or stops playing (see `ProcessMonitor`).
+    @ObservationIgnored private var processMonitor: ProcessMonitor?
 
     /// Tells us when the default output device changes (AirPods connected…).
     @ObservationIgnored private var outputDeviceListener: PropertyListener?
@@ -72,19 +73,8 @@ final class MixerModel {
         outputDeviceListener = PropertyListener(.system, kAudioHardwarePropertyDefaultOutputDevice) { [weak self] in
             self?.outputDeviceChanged()
         }
+        processMonitor = ProcessMonitor { [weak self] in self?.refresh() }
         outputDeviceChanged()   // also does the first refresh
-
-        // Refresh once a second: app list and tap housekeeping.
-        timers.append(Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.refresh() }
-        })
-
-        // Quick check a few times a second: did a turned-down app start playing?
-        // This is what keeps the "released while silent" approach from letting
-        // much audio through at full volume when playback resumes.
-        timers.append(Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.catchResumedApps() }
-        })
     }
 
     // MARK: - Reading per-app settings
@@ -185,22 +175,18 @@ final class MixerModel {
             let silentFor = now.timeIntervalSince(lastActive[id] ?? .distantPast)
             if !app.isPlaying && silentFor > releaseAfterSilence {
                 releaseTap(for: id)   // quiet for a while → let the purple dot turn off
+            } else if !app.isPlaying {
+                // Nothing will notify us when the silence has lasted long enough,
+                // so come back then. (The main queue keeps running during slider
+                // drags, unlike a default-mode Timer.)
+                DispatchQueue.main.asyncAfter(deadline: .now() + releaseAfterSilence - silentFor + 0.1) { [weak self] in
+                    self?.refresh()
+                }
             }
         }
 
         for app in scanned where app.isPlaying {
             applySetting(to: app)     // playing with a custom level → make sure it's tapped
-        }
-    }
-
-    /// Runs several times a second, but only looks at apps that have a custom
-    /// level and no tap right now — a cheap check.
-    private func catchResumedApps() {
-        for app in apps where taps[app.id] == nil && settings[app.id]?.isCustom == true {
-            if AudioAppScanner.isPlaying(app.processObjectIDs) {
-                lastActive[app.id] = Date()
-                applySetting(to: app)
-            }
         }
     }
 
