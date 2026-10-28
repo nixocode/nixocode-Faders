@@ -21,7 +21,7 @@ import os
 final class AppVolumeTap {
 
     let processObjectIDs: [AudioObjectID]
-    private let gain = Gain()
+    private let renderer: TapRenderer
 
     private var tapID = AudioObjectID.unknown
     private let tapUUID = UUID()
@@ -34,7 +34,7 @@ final class AppVolumeTap {
     /// (most commonly because the user denied the audio-capture permission).
     init?(appName: String, processObjectIDs: [AudioObjectID], output: OutputDevice, volume: Float) {
         self.processObjectIDs = processObjectIDs
-        gain.target = volume
+        renderer = TapRenderer(gain: min(max(volume, 0), 1))
 
         do {
             try createTap(appName: appName)
@@ -51,8 +51,8 @@ final class AppVolumeTap {
 
     /// 0.0 = silent, 1.0 = the app's normal level. Safe to call from the main thread.
     var volume: Float {
-        get { gain.target }
-        set { gain.target = min(max(newValue, 0), 1) }
+        get { renderer.targetGain }
+        set { renderer.targetGain = min(max(newValue, 0), 1) }
     }
 
     // MARK: - Setup steps
@@ -92,12 +92,12 @@ final class AppVolumeTap {
     }
 
     private func startRendering() throws {
-        let gain = self.gain   // capture only the gain, never `self`, on the audio thread
+        let renderer = self.renderer   // capture only the renderer, never `self`, on the audio thread
         let queue = DispatchQueue(label: "Faders.render", qos: .userInteractive)
 
         try check(
             AudioDeviceCreateIOProcIDWithBlock(&ioProcID, aggregateDeviceID, queue) { _, input, _, output, _ in
-                gain.render(from: input, to: output)
+                renderer.render(from: input, to: output)
             },
             "create render callback"
         )
@@ -133,57 +133,5 @@ final class AppVolumeTap {
 
     private func check(_ status: OSStatus, _ step: String) throws {
         guard status == noErr else { throw TapError(step: step, status: status) }
-    }
-}
-
-// MARK: - The audio-thread part
-
-/// Applies volume to audio buffers.
-///
-/// `render` runs on Core Audio's real-time thread, so it must never allocate,
-/// lock, log or wait. It only reads `target` and does simple math.
-private final class Gain: @unchecked Sendable {
-
-    /// Set from the UI. A single aligned Float is read/written atomically on
-    /// Apple silicon and Intel, which is all we need here.
-    var target: Float = 1
-
-    /// The level actually applied last time (only touched on the audio thread).
-    private var current: Float = 1
-
-    func render(from input: UnsafePointer<AudioBufferList>, to output: UnsafeMutablePointer<AudioBufferList>) {
-        let inputBuffers = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: input))
-        let outputBuffers = UnsafeMutableAudioBufferListPointer(output)
-
-        // Glide from the previous level to the new one across this buffer,
-        // so dragging the slider never causes clicks.
-        let start = current
-        let end = target
-
-        for index in 0..<outputBuffers.count {
-            let out = outputBuffers[index]
-            guard let outSamples = out.mData?.assumingMemoryBound(to: Float.self) else { continue }
-            let outCount = Int(out.mDataByteSize) / MemoryLayout<Float>.size
-
-            // No matching input buffer → output silence.
-            guard index < inputBuffers.count,
-                  let inSamples = inputBuffers[index].mData?.assumingMemoryBound(to: Float.self)
-            else {
-                outSamples.update(repeating: 0, count: outCount)
-                continue
-            }
-
-            let count = min(outCount, Int(inputBuffers[index].mDataByteSize) / MemoryLayout<Float>.size)
-            let step = count > 0 ? (end - start) / Float(count) : 0
-
-            for i in 0..<count {
-                outSamples[i] = inSamples[i] * (start + step * Float(i))
-            }
-            if count < outCount {
-                (outSamples + count).update(repeating: 0, count: outCount - count)
-            }
-        }
-
-        current = end
     }
 }
