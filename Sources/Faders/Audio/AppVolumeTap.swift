@@ -44,6 +44,7 @@ final class AppVolumeTap {
         do {
             try createTap(appName: appName)
             try createAggregateDevice(appName: appName, output: output)
+            try waitUntilReady(output: output)
             let layout = try readLayout(appName: appName, output: output)
             let renderer = TapRenderer(gain: min(max(volume, 0), 1), layout: layout)
             self.renderer = renderer
@@ -95,6 +96,36 @@ final class AppVolumeTap {
         try check(
             AudioHardwareCreateAggregateDevice(description as CFDictionary, &aggregateDeviceID),
             "create aggregate device"
+        )
+    }
+
+    /// Core Audio builds a new aggregate device in the background, so it may not be
+    /// usable the moment `AudioHardwareCreateAggregateDevice` returns. Starting it
+    /// too early can fail, or start a device whose streams don't exist yet (which
+    /// would also make `readLayout` see the wrong streams). So wait — briefly,
+    /// it's normally ready at once — until it's alive and both the tap's input
+    /// and the output streams are there.
+    private func waitUntilReady(output: OutputDevice, timeout: TimeInterval = 1) throws {
+        let deviceInputs = output.id.streamFormats(scope: kAudioObjectPropertyScopeInput).count
+        let start = Date()
+        var alive = false, inputs = 0, outputs = 0
+
+        repeat {
+            alive = aggregateDeviceID.read(kAudioDevicePropertyDeviceIsAlive, defaultValue: UInt32(0)) == 1
+            inputs = aggregateDeviceID.streamFormats(scope: kAudioObjectPropertyScopeInput).count
+            outputs = aggregateDeviceID.streamFormats(scope: kAudioObjectPropertyScopeOutput).count
+            if alive && inputs > deviceInputs && outputs > 0 {
+                let waited = Int(Date().timeIntervalSince(start) * 1000)
+                if waited > 0 { Self.log.info("Aggregate device ready after \(waited) ms") }
+                return
+            }
+            Thread.sleep(forTimeInterval: 0.005)
+        } while Date().timeIntervalSince(start) < timeout
+
+        throw TapError(
+            step: "get the aggregate device ready within \(timeout) s " +
+                "(alive: \(alive), input streams: \(inputs), output streams: \(outputs))",
+            status: noErr
         )
     }
 
@@ -180,8 +211,17 @@ final class AppVolumeTap {
     private struct TapError: LocalizedError {
         let step: String
         let status: OSStatus
+
         var errorDescription: String? {
-            status == noErr ? "Failed to \(step)" : "Failed to \(step) (OSStatus \(status))"
+            status == noErr ? "Failed to \(step)" : "Failed to \(step) (OSStatus \(status)\(codeSuffix))"
+        }
+
+        /// Core Audio errors are usually four letters packed into the number
+        /// ('nope', '!dev', 'who?'), which is what you search the headers for.
+        private var codeSuffix: String {
+            let bytes = withUnsafeBytes(of: UInt32(bitPattern: status).bigEndian, Array.init)
+            guard bytes.allSatisfy({ (0x20...0x7E).contains($0) }) else { return "" }
+            return " '\(String(decoding: bytes, as: UTF8.self))'"
         }
     }
 
