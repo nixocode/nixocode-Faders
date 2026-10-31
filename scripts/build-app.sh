@@ -24,6 +24,9 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/$APP_NAME" "$APP/Contents/MacOS/$APP_NAME"
 cp Support/Info.plist "$APP/Contents/Info.plist"
 
+echo "▸ Stripping debug symbols…"
+strip -x "$APP/Contents/MacOS/$APP_NAME"   # about half the binary; nothing at runtime needs them
+
 echo "▸ Making the app icon…"
 ICONSET="$BUILD_DIR/AppIcon.iconset"
 rm -rf "$ICONSET" && mkdir -p "$ICONSET"
