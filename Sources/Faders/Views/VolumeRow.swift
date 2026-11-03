@@ -68,19 +68,28 @@ private struct MuteButton: View {
     let volume: Float
     let action: () -> Void
 
+    /// One, two or three waves, swapped without an animation. On macOS 27 both
+    /// `Image(systemName:variableValue:)` and `.contentTransition(.symbolEffect(.replace))`
+    /// make the system allocate about 130 MB of graphics memory for several
+    /// seconds each time the symbol redraws (measured: 37 MB → 170 MB on a
+    /// single volume change; 45 MB at most without them). Steps also mean the
+    /// icon only redraws when the level crosses one.
     private var symbol: String {
         if isMuted || volume == 0 { return "speaker.slash.fill" }
-        return "speaker.wave.3.fill"
+        switch volume {
+        case ..<0.34: return "speaker.wave.1.fill"
+        case ..<0.67: return "speaker.wave.2.fill"
+        default: return "speaker.wave.3.fill"
+        }
     }
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: symbol, variableValue: Double(volume))
+            Image(systemName: symbol)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(isMuted ? .primary : .secondary)
                 .frame(width: 28, height: 28)
                 .contentShape(Circle())
-                .contentTransition(.symbolEffect(.replace))
         }
         .buttonStyle(.plain)
         // Quiet by default, a shade stronger when muted, like a toggle that's on.
