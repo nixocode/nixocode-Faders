@@ -1,4 +1,3 @@
-import ServiceManagement
 import SwiftUI
 
 /// The panel that drops down from the menu bar icon.
@@ -120,7 +119,12 @@ struct MixerView: View {
 
     private var footer: some View {
         HStack(spacing: 14) {
-            LaunchAtLoginToggle()
+            Toggle(
+                "Open at Login",
+                isOn: Binding(get: { mixer.opensAtLogin }, set: { mixer.setOpensAtLogin($0) })
+            )
+            .toggleStyle(.switch)
+            .controlSize(.mini)
             Spacer()
             Button("Sound Settings…") {
                 NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Sound-Settings.extension")!)
@@ -184,28 +188,5 @@ private struct EmptyMessage: View {
         .foregroundStyle(.secondary)
         .padding(12)
         .rowBackground()
-    }
-}
-
-/// Uses the modern ServiceManagement API, so Faders appears in
-/// System Settings → General → Login Items like any well-behaved app.
-private struct LaunchAtLoginToggle: View {
-    @State private var isOn = SMAppService.mainApp.status == .enabled
-
-    var body: some View {
-        Toggle("Open at Login", isOn: $isOn)
-            .toggleStyle(.switch)
-            .controlSize(.mini)
-            .onChange(of: isOn) { _, enabled in
-                do {
-                    if enabled {
-                        try SMAppService.mainApp.register()
-                    } else {
-                        try SMAppService.mainApp.unregister()
-                    }
-                } catch {
-                    isOn = SMAppService.mainApp.status == .enabled   // show the real state
-                }
-            }
     }
 }

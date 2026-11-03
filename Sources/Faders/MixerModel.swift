@@ -1,6 +1,7 @@
 import AppKit
 import CoreAudio
 import Observation
+import ServiceManagement
 import os
 
 /// The brain of the app: knows which apps are playing, what volume each one
@@ -56,10 +57,19 @@ final class MixerModel {
     /// True if any app is set to something other than 100% (enables "Reset All").
     var hasCustomLevels: Bool { settings.values.contains { $0.isCustom } }
 
+    /// Whether Faders starts when you log in (System Settings → General → Login Items).
+    private(set) var opensAtLogin = SMAppService.mainApp.status == .enabled
+
     /// Set by the panel while it's on screen. Rows then stay put when their app
     /// goes quiet (see `refresh`), and drop out once the panel closes.
     @ObservationIgnored var isPanelOpen = false {
-        didSet { if !isPanelOpen { refresh() } }
+        didSet {
+            if isPanelOpen {
+                readOpensAtLogin()   // it may have changed in System Settings
+            } else {
+                refresh()
+            }
+        }
     }
 
     // MARK: Tuning
@@ -153,6 +163,27 @@ final class MixerModel {
     func setAdjustingOutputVolume(_ adjusting: Bool) {
         isAdjustingOutputVolume = adjusting
         if !adjusting { readOutputLevels() }   // settle on what the device actually chose
+    }
+
+    func setOpensAtLogin(_ enabled: Bool) {
+        do {
+            if enabled {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+        } catch {
+            Self.log.error("Open at Login: \(error.localizedDescription, privacy: .public)")
+        }
+        // macOS may want the user to approve the login item first.
+        if enabled, SMAppService.mainApp.status == .requiresApproval {
+            SMAppService.openSystemSettingsLoginItems()
+        }
+        readOpensAtLogin()   // show the real state, whatever happened
+    }
+
+    private func readOpensAtLogin() {
+        opensAtLogin = SMAppService.mainApp.status == .enabled
     }
 
     /// Puts every app back to 100% and removes all taps.
