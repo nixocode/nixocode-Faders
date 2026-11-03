@@ -16,6 +16,8 @@ struct MixerView: View {
     /// True exactly while the panel is open: it's the key window then.
     @Environment(\.appearsActive) private var isOpen
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The row the keyboard is on, if any.
+    @FocusState private var focusedRow: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -34,7 +36,15 @@ struct MixerView: View {
         .animation(.smooth(duration: 0.25), value: mixer.apps.map(\.id))
         // Not onAppear/onDisappear: `MenuBarExtra` keeps this view alive between
         // openings, so they fire once and never, respectively.
-        .onChange(of: isOpen, initial: true) { _, isOpen in mixer.isPanelOpen = isOpen }
+        .onChange(of: isOpen, initial: true) { _, isOpen in
+            mixer.isPanelOpen = isOpen
+            // macOS focuses the first row of a new key window, just after this
+            // runs. Clear that, so the focus ring only shows once someone
+            // actually presses Tab.
+            if isOpen {
+                DispatchQueue.main.async { focusedRow = nil }
+            }
+        }
     }
 
     // MARK: - Sections
@@ -65,6 +75,7 @@ struct MixerView: View {
             ) {
                 DeviceIcon(symbolName: output.symbolName)
             }
+            .focused($focusedRow, equals: "output")
         } else {
             EmptyMessage(
                 symbol: "speaker.badge.exclamationmark",
@@ -100,6 +111,7 @@ struct MixerView: View {
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                 }
+                .focused($focusedRow, equals: app.id)
                 .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.96)))
             }
         }
