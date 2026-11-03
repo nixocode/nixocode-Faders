@@ -8,12 +8,25 @@ import Observation
 /// Everything here runs on the main thread. The only code that runs on the
 /// audio thread lives in `AppVolumeTap`.
 ///
-/// **About the purple dot.** While Faders controls an app (a "tap" is active),
-/// macOS shows a purple privacy dot in the menu bar. To keep it off as much as
-/// possible we only hold a tap while the app is actually playing sound:
+/// **About the purple dot.** While Faders reads an app's audio tap, macOS shows a
+/// purple privacy dot in the menu bar. What we measured on macOS 27 (Oct 2026):
 ///
-///   • an app with a custom level starts playing → tap it right away
-///   • it goes quiet for a few seconds          → let go of it (dot turns off)
+///   • The dot follows *reading* the tap. A tap that exists but isn't being read
+///     shows no dot.
+///   • A tap made "muted when tapped" lets the app play at full volume whenever
+///     it isn't read. A "muted" tap keeps the app silent.
+///   • Creating a tap and its aggregate device takes ~50 ms on built-in speakers
+///     and ~400 ms on AirPods. Faders 1.1 destroyed taps after 3 s of silence and
+///     re-created them on resume, so that much audio played at full volume.
+///
+/// So every app with a custom level keeps a muted tap for as long as it runs, and
+/// we only *read* it while the app is playing (and for a few seconds after):
+///
+///   • idle                      → muted tap, not read: no dot, no sound
+///   • starts playing            → start reading: the first moments are silent
+///                                 instead of loud (~150 ms on Bluetooth)
+///   • quiet for a few seconds   → stop reading: the dot turns off
+///   • turned all the way down   → never read at all
 @MainActor
 @Observable
 final class MixerModel {
@@ -30,7 +43,7 @@ final class MixerModel {
 
     /// True when macOS refused to let us control an app — almost always because
     /// the audio-recording permission is off. The UI shows a hint.
-    private(set) var permissionProblem = false
+    var permissionProblem: Bool { !failedAppIDs.isEmpty }
 
     /// True if any app is set to something other than 100% (enables "Reset All").
     var hasCustomLevels: Bool { settings.values.contains { $0.isCustom } }
@@ -43,22 +56,24 @@ final class MixerModel {
 
     // MARK: Tuning
 
-    /// How long an app must be silent before we let go of it.
-    private let releaseAfterSilence: TimeInterval = 3
+    /// How long we keep reading a tap after its app goes quiet. Long enough that
+    /// skipping a track doesn't flicker the purple dot.
+    private let stopReadingAfterSilence: TimeInterval = 3
+
 
     // MARK: Private state
 
     /// Per-app settings, remembered between launches (keyed by `AudioApp.id`).
     private var settings: [String: AppSetting] = AppSetting.loadAll()
 
-    /// Active taps, keyed by `AudioApp.id`.
+    /// Taps, keyed by `AudioApp.id`: one for every running app with a custom level.
     @ObservationIgnored private var taps: [String: AppVolumeTap] = [:]
 
-    /// When we last heard each app play (or the user touched its slider).
-    @ObservationIgnored private var lastActive: [String: Date] = [:]
+    /// When we last heard each app play.
+    @ObservationIgnored private var lastPlayed: [String: Date] = [:]
 
-    /// Apps we failed to control; we don't retry them every second.
-    @ObservationIgnored private var failedAppIDs: Set<String> = []
+    /// Apps we failed to control; we don't retry them until the user does.
+    private var failedAppIDs: Set<String> = []
 
     /// Tells us the moment an app starts or stops playing (see `ProcessMonitor`).
     @ObservationIgnored private var processMonitor: ProcessMonitor?
@@ -124,15 +139,13 @@ final class MixerModel {
         settings.removeAll()
         AppSetting.saveAll(settings)
         failedAppIDs.removeAll()
-        permissionProblem = false
         releaseAllTaps()
     }
 
     private func userChangedSetting(of app: AudioApp) {
         AppSetting.saveAll(settings)
         failedAppIDs.remove(app.id)    // the user is trying again
-        lastActive[app.id] = Date()    // don't release it while they're dragging
-        applySetting(to: app)
+        syncTap(for: app)
     }
 
     // MARK: - Keeping everything in sync
@@ -148,10 +161,7 @@ final class MixerModel {
         outputLevelListeners = newOutput?.observeLevels { [weak self] in self?.readOutputLevels() } ?? []
         readOutputLevels()
 
-        // Every tap still points at the old device. Release them; `refresh`
-        // re-creates the ones still needed against the new device.
-        releaseAllTaps()
-        refresh()
+        refresh()   // moves every tap over to the new device
     }
 
     private func readOutputLevels() {
@@ -160,82 +170,98 @@ final class MixerModel {
     }
 
     private func refresh() {
-        // 1. Apps. Show apps that are playing, plus apps with a custom level so
-        //    you can still adjust them while they're paused. While the panel is
-        //    open, rows also stay when their app goes quiet (a pause, the gap
-        //    between two songs): a row shouldn't vanish from under the pointer,
-        //    and the panel can't animate its height, so it would jump.
+        // Show apps that are playing, plus apps with a custom level so you can
+        // still adjust them while they're paused. While the panel is open, rows
+        // also stay when their app goes quiet (a pause, the gap between two
+        // songs): a row shouldn't vanish from under the pointer, and the panel
+        // can't animate its height, so it would jump.
         let now = Date()
         let scanned = AudioAppScanner.scan()
-        for app in scanned where app.isPlaying { lastActive[app.id] = now }
+        for app in scanned where app.isPlaying { lastPlayed[app.id] = now }
 
         let listed = Set(apps.map(\.id))
         let visible = scanned.filter {
-            $0.isPlaying || settings[$0.id]?.isCustom == true || taps[$0.id] != nil
-                || (isPanelOpen && listed.contains($0.id))
+            $0.isPlaying || settings[$0.id]?.isCustom == true || (isPanelOpen && listed.contains($0.id))
         }
         if visible != apps { apps = visible }
 
-        // 2. Taps.
-        let scannedByID = Dictionary(scanned.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        // Apps that quit take their taps with them.
+        let running = Set(scanned.map(\.id))
+        for id in taps.keys where !running.contains(id) { releaseTap(for: id) }
 
-        for (id, tap) in taps {
-            guard let app = scannedByID[id], app.processObjectIDs == tap.processObjectIDs else {
-                // The app quit, or started using different helper processes.
-                releaseTap(for: id)
-                continue
-            }
-            let silentFor = now.timeIntervalSince(lastActive[id] ?? .distantPast)
-            if !app.isPlaying && silentFor > releaseAfterSilence {
-                releaseTap(for: id)   // quiet for a while → let the purple dot turn off
-            } else if !app.isPlaying {
-                // Nothing will notify us when the silence has lasted long enough,
-                // so come back then. (The main queue keeps running during slider
-                // drags, unlike a default-mode Timer.)
-                DispatchQueue.main.asyncAfter(deadline: .now() + releaseAfterSilence - silentFor + 0.1) { [weak self] in
-                    self?.refresh()
-                }
-            }
-        }
-
-        for app in scanned where app.isPlaying {
-            applySetting(to: app)     // playing with a custom level → make sure it's tapped
-        }
+        for app in scanned { syncTap(for: app) }
     }
 
-    /// Makes the audio match the app's setting: updates or creates its tap.
-    private func applySetting(to app: AudioApp) {
+    /// Makes an app's tap match its setting and whether it's playing.
+    private func syncTap(for app: AudioApp) {
         let setting = settings[app.id] ?? AppSetting()
-
-        if let tap = taps[app.id] {
-            if setting.isCustom {
-                tap.volume = setting.effectiveVolume   // already controlling it: just change the level
-            } else {
-                releaseTap(for: app.id)                // back to 100%: nothing to do, let go
-            }
+        guard setting.isCustom, let output else {
+            releaseTap(for: app.id)   // back to 100% (or no output): leave the app alone
             return
         }
 
-        guard setting.isCustom, let output, !failedAppIDs.contains(app.id) else { return }
+        // A tap covers a fixed set of processes on one device. If the app started
+        // a new helper or the output changed, build a new tap *before* letting go
+        // of the old one, so the app never slips out at full volume in between.
+        var replacedTap: AppVolumeTap?
+        if let tap = taps[app.id], tap.processObjectIDs == app.processObjectIDs, tap.outputUID == output.uid {
+            // Up to date.
+        } else {
+            guard !failedAppIDs.contains(app.id) else { return }
+            guard let newTap = AppVolumeTap(
+                appName: app.name,
+                processObjectIDs: app.processObjectIDs,
+                output: output,
+                volume: setting.effectiveVolume
+            ) else {
+                giveUp(on: app.id)
+                return
+            }
+            replacedTap = taps[app.id]
+            taps[app.id] = newTap
+        }
+        guard let tap = taps[app.id] else { return }
+        defer { replacedTap?.destroy() }
 
-        let tap = AppVolumeTap(
-            appName: app.name,
-            processObjectIDs: app.processObjectIDs,
-            output: output,
-            volume: setting.effectiveVolume
-        )
-        taps[app.id] = tap
-        if tap == nil { failedAppIDs.insert(app.id) }
-        permissionProblem = !failedAppIDs.isEmpty
+        tap.volume = setting.effectiveVolume
+
+        // Read the tap only while there's something to hear.
+        let silentFor = Date().timeIntervalSince(lastPlayed[app.id] ?? .distantPast)
+        let shouldRead = setting.effectiveVolume > 0 && silentFor < stopReadingAfterSilence
+        if shouldRead {
+            do {
+                try tap.startIO()
+            } catch {
+                giveUp(on: app.id)   // better to hear the app at 100% than not at all
+                return
+            }
+        } else {
+            tap.stopIO()
+        }
+
+        if shouldRead && !app.isPlaying {
+            // Nothing will tell us when the silence has lasted long enough, so
+            // come back then. (The main queue keeps running during slider drags,
+            // unlike a default-mode Timer.)
+            DispatchQueue.main.asyncAfter(deadline: .now() + stopReadingAfterSilence - silentFor + 0.1) { [weak self] in
+                self?.refresh()
+            }
+        }
+    }
+
+    /// Stops trying to control an app until the user touches its slider again.
+    private func giveUp(on id: String) {
+        releaseTap(for: id)
+        failedAppIDs.insert(id)
     }
 
     private func releaseTap(for id: String) {
-        taps[id]?.stop()
+        taps[id]?.destroy()
         taps[id] = nil
     }
 
     private func releaseAllTaps() {
-        taps.values.forEach { $0.stop() }
+        taps.values.forEach { $0.destroy() }
         taps.removeAll()
     }
 }

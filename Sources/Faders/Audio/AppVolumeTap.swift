@@ -8,7 +8,7 @@ import os
 /// macOS 14.2:
 ///
 ///   1. **Tap** the app's audio with a Core Audio *process tap*. The tap is created
-///      "muted when tapped", so the app's sound no longer goes straight to the speakers.
+///      "muted", so the app's sound no longer goes straight to the speakers.
 ///   2. Wrap the tap in a private **aggregate device** that also contains the real
 ///      output (your speakers/headphones).
 ///   3. Run a tiny **render callback** on that device that copies the tapped audio to
@@ -18,9 +18,21 @@ import os
 ///
 /// We only create a tap once the user moves a slider away from 100%, so apps you
 /// never touch are left completely alone.
+///
+/// **Reading vs. existing.** A new tap starts idle: the app is muted, but nothing
+/// reads the tap yet. `startIO()` starts the render callback (audio flows, at our
+/// volume) and `stopIO()` stops it again (the app goes back to silent). macOS's
+/// purple privacy dot follows the *reading*, not the tap — see `MixerModel` for
+/// how that's used and what was measured.
 final class AppVolumeTap {
 
     let processObjectIDs: [AudioObjectID]
+
+    /// The output device this tap plays to. A different default output means a new tap.
+    let outputUID: String
+
+    /// True while the render callback runs (and the purple dot shows).
+    private(set) var isRunning = false
 
     /// 0.0 = silent, 1.0 = the app's normal level.
     var volume: Float {
@@ -35,42 +47,66 @@ final class AppVolumeTap {
 
     private static let log = Logger(subsystem: "Faders", category: "AppVolumeTap")
 
-    /// Starts routing the app's audio through us. Returns nil if macOS refused
-    /// (most commonly because the user denied the audio-capture permission).
+    private let appName: String
+
+    /// Takes over the app's audio: from now on it's muted, until `startIO()` plays
+    /// it through us. Returns nil if Core Audio refused.
     init?(appName: String, processObjectIDs: [AudioObjectID], output: OutputDevice, volume: Float) {
+        self.appName = appName
         self.processObjectIDs = processObjectIDs
+        self.outputUID = output.uid
         self.volume = volume
 
         do {
-            try createTap(appName: appName)
-            try createAggregateDevice(appName: appName, output: output)
+            try createTap()
+            try createAggregateDevice(output: output)
             try waitUntilReady(output: output)
-            let layout = try readLayout(appName: appName, output: output)
+            let layout = try readLayout(output: output)
             let renderer = TapRenderer(gain: min(max(volume, 0), 1), layout: layout)
             self.renderer = renderer
-            try startRendering(with: renderer)
+            try createRenderCallback(with: renderer)
         } catch {
             Self.log.error("Could not control \(appName, privacy: .public): \(error.localizedDescription, privacy: .public)")
-            stop()
+            destroy()
             return nil
         }
     }
 
-    deinit { stop() }
+    deinit { destroy() }
+
+    // MARK: - Reading the tap
+
+    /// Starts playing the app through us, at our volume. Throws if Core Audio
+    /// refuses — most commonly because the audio-capture permission was denied.
+    func startIO() throws {
+        guard !isRunning, let ioProcID else { return }
+        try check(AudioDeviceStart(aggregateDeviceID, ioProcID), "start reading \(appName)")
+        isRunning = true
+    }
+
+    /// Stops reading the tap. The app stays muted, and the purple dot goes away.
+    func stopIO() {
+        guard isRunning, let ioProcID else { return }
+        AudioDeviceStop(aggregateDeviceID, ioProcID)
+        isRunning = false
+    }
 
     // MARK: - Setup steps
 
-    private func createTap(appName: String) throws {
+    private func createTap() throws {
         let description = CATapDescription(stereoMixdownOfProcesses: processObjectIDs)
         description.uuid = tapUUID
         description.name = "Faders – \(appName)"
         description.isPrivate = true
-        description.muteBehavior = .mutedWhenTapped   // we become the only path to the speakers
+        // `.muted`, not `.mutedWhenTapped`: the latter lets the app's audio through
+        // at full volume whenever nobody reads the tap, which is exactly when the
+        // render callback is stopped.
+        description.muteBehavior = .muted
 
         try check(AudioHardwareCreateProcessTap(description, &tapID), "create process tap")
     }
 
-    private func createAggregateDevice(appName: String, output: OutputDevice) throws {
+    private func createAggregateDevice(output: OutputDevice) throws {
         let tapUID = tapUUID.uuidString
 
         let description: [String: Any] = [
@@ -137,7 +173,7 @@ final class AppVolumeTap {
     /// them running: neither `kAudioDevicePropertyIOProcStreamUsage` nor
     /// `kAudioSubDeviceInputChannelsKey` switches them off (both tried on
     /// macOS 27). The renderer simply never reads them.
-    private func readLayout(appName: String, output: OutputDevice) throws -> RenderLayout {
+    private func readLayout(output: OutputDevice) throws -> RenderLayout {
         let tapFormat = tapID.read(kAudioTapPropertyFormat, defaultValue: AudioStreamBasicDescription())
         let deviceInputs = output.id.streamFormats(scope: kAudioObjectPropertyScopeInput)
         let inputs = aggregateDeviceID.streamFormats(scope: kAudioObjectPropertyScopeInput)
@@ -151,7 +187,7 @@ final class AppVolumeTap {
         // Note: the tap's input stream reports the tap's own rate (e.g. 48 kHz) even
         // though the data it delivers has already been resampled to the output's.
         Self.log.info("""
-            \(appName, privacy: .public): tap \(tapFormat?.summary ?? "unknown", privacy: .public); \
+            \(self.appName, privacy: .public): tap \(tapFormat?.summary ?? "unknown", privacy: .public); \
             inputs [\(inputs.map(\.summary).joined(separator: " | "), privacy: .public)] \
             (first \(deviceInputs.count) belong to the device); \
             outputs [\(outputs.map(\.summary).joined(separator: " | "), privacy: .public)]; \
@@ -174,7 +210,7 @@ final class AppVolumeTap {
         return layout
     }
 
-    private func startRendering(with renderer: TapRenderer) throws {
+    private func createRenderCallback(with renderer: TapRenderer) throws {
         // Capture only the renderer, never `self`, on the audio thread.
         let queue = DispatchQueue(label: "Faders.render", qos: .userInteractive)
 
@@ -184,14 +220,14 @@ final class AppVolumeTap {
             },
             "create render callback"
         )
-        try check(AudioDeviceStart(aggregateDeviceID, ioProcID), "start device")
     }
 
     // MARK: - Teardown (reverse order of setup)
 
-    func stop() {
+    /// Gives the app back its normal audio path (at its own full volume).
+    func destroy() {
+        stopIO()
         if aggregateDeviceID.isValid, let ioProcID {
-            AudioDeviceStop(aggregateDeviceID, ioProcID)
             AudioDeviceDestroyIOProcID(aggregateDeviceID, ioProcID)
         }
         ioProcID = nil
