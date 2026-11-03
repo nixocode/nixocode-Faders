@@ -358,17 +358,18 @@ struct AppSetting: Codable {
 
     private static let defaultsKey = "appSettings"
 
-    static func loadAll() -> [String: AppSetting] {
-        guard let data = UserDefaults.standard.data(forKey: defaultsKey),
+    static func loadAll(from defaults: UserDefaults = .standard) -> [String: AppSetting] {
+        guard let data = defaults.data(forKey: defaultsKey),
               let settings = try? JSONDecoder().decode([String: AppSetting].self, from: data)
         else { return [:] }
         return settings
     }
 
-    static func saveAll(_ settings: [String: AppSetting]) {
+    /// Only levels that differ from the default are kept.
+    static func saveAll(_ settings: [String: AppSetting], to defaults: UserDefaults = .standard) {
         let custom = settings.filter { $0.value.isCustom }
         if let data = try? JSONEncoder().encode(custom) {
-            UserDefaults.standard.set(data, forKey: defaultsKey)
+            defaults.set(data, forKey: defaultsKey)
         }
     }
 }

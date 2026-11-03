@@ -101,6 +101,56 @@ final class BundleContainmentTests: XCTestCase {
     }
 }
 
+/// Remembered per-app levels.
+final class AppSettingTests: XCTestCase {
+
+    private var defaults: UserDefaults!
+    private let suite = "FadersTests.AppSetting"
+
+    override func setUp() {
+        defaults = UserDefaults(suiteName: suite)
+        defaults.removePersistentDomain(forName: suite)
+    }
+
+    override func tearDown() {
+        defaults.removePersistentDomain(forName: suite)
+    }
+
+    func testMutedMeansSilentButKeepsTheLevel() {
+        let setting = AppSetting(volume: 0.4, isMuted: true)
+        XCTAssertEqual(setting.effectiveVolume, 0)
+        XCTAssertEqual(setting.volume, 0.4)
+        XCTAssertTrue(setting.isCustom)
+    }
+
+    func testFullVolumeIsTheDefault() {
+        XCTAssertFalse(AppSetting().isCustom)
+    }
+
+    func testRoundTripKeepsOnlyCustomLevels() {
+        AppSetting.saveAll([
+            "com.spotify.client": AppSetting(volume: 0.3, isMuted: false),
+            "com.google.Chrome": AppSetting(volume: 0.8, isMuted: true),
+            "com.apple.Music": AppSetting(volume: 1, isMuted: false),   // default: not stored
+        ], to: defaults)
+
+        let loaded = AppSetting.loadAll(from: defaults)
+        XCTAssertEqual(Set(loaded.keys), ["com.spotify.client", "com.google.Chrome"])
+        XCTAssertEqual(loaded["com.spotify.client"]?.volume, 0.3)
+        XCTAssertEqual(loaded["com.google.Chrome"]?.isMuted, true)
+    }
+
+    func testNothingSavedLoadsEmpty() {
+        XCTAssertTrue(AppSetting.loadAll(from: defaults).isEmpty)
+    }
+
+    /// A damaged or older settings file must not crash the app or invent levels.
+    func testUnreadableDataLoadsEmpty() {
+        defaults.set(Data("not json".utf8), forKey: "appSettings")
+        XCTAssertTrue(AppSetting.loadAll(from: defaults).isEmpty)
+    }
+}
+
 /// Giving WebKit's per-app processes to their app.
 final class WebKitOwnerTests: XCTestCase {
 
