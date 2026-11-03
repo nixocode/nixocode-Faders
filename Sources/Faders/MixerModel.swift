@@ -79,8 +79,9 @@ final class MixerModel {
     private let stopReadingAfterSilence: TimeInterval = 3
 
     /// How long an app must play into a silent tap before we decide macOS isn't
-    /// letting us hear it. Generous, so a quiet intro or a slow click on the
-    /// permission prompt isn't mistaken for a refusal.
+    /// letting us hear it. Generous, so a quiet intro isn't mistaken for a
+    /// refusal. (The clock starts once reading has really begun, which is after
+    /// the user answers the permission prompt; see `AppVolumeTap`.)
     private let silenceMeansNoAccess: TimeInterval = 8
 
     // MARK: Private state
@@ -269,6 +270,15 @@ final class MixerModel {
                 giveUp(on: app.id)
                 return
             }
+            // The tap starts reading in the background; these tell us how it went.
+            newTap.onStartedReading = { [weak self, weak newTap] in
+                guard let self, let newTap, self.taps[app.id] === newTap else { return }
+                if AudioAppScanner.isPlaying(newTap.processObjectIDs) { self.checkAccess(app, tap: newTap) }
+            }
+            newTap.onFailure = { [weak self, weak newTap] in
+                guard let self, let newTap, self.taps[app.id] === newTap else { return }
+                self.giveUp(on: app.id)   // better to hear the app at 100% than not at all
+            }
             replacedTap = taps[app.id]
             taps[app.id] = newTap
         }
@@ -281,14 +291,8 @@ final class MixerModel {
         let silentFor = Date().timeIntervalSince(lastPlayed[app.id] ?? .distantPast)
         let shouldRead = setting.effectiveVolume > 0 && silentFor < stopReadingAfterSilence
         if shouldRead {
-            do {
-                try tap.startIO()
-            } catch {
-                Self.log.error("Could not start \(app.name, privacy: .public): \(error.localizedDescription, privacy: .public)")
-                giveUp(on: app.id)   // better to hear the app at 100% than not at all
-                return
-            }
-            if app.isPlaying { checkAccess(app, tap: tap) }
+            tap.startIO()
+            if app.isPlaying, tap.isReading { checkAccess(app, tap: tap) }
         } else {
             tap.stopIO()
         }
@@ -316,7 +320,8 @@ final class MixerModel {
 
             if tap.hasHeardSound {
                 self.hasAudioAccess = true
-            } else if tap.isRunning, AudioAppScanner.isPlaying(tap.processObjectIDs) {
+                Self.log.notice("Heard \(app.name, privacy: .public): Faders is allowed to hear app audio")
+            } else if tap.isReading, AudioAppScanner.isPlaying(tap.processObjectIDs) {
                 Self.log.error("\(app.name, privacy: .public) played for \(Int(self.silenceMeansNoAccess)) s and Faders heard only silence: no permission to hear app audio?")
                 self.giveUp(on: app.id)   // the app plays normally again; the panel shows the hint
             }

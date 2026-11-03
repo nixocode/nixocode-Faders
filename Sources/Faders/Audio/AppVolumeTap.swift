@@ -24,6 +24,12 @@ import os
 /// volume) and `stopIO()` stops it again (the app goes back to silent). macOS's
 /// purple privacy dot follows the *reading*, not the tap — see `MixerModel` for
 /// how that's used and what was measured.
+///
+/// **The permission prompt.** The first time Faders reads app audio, macOS asks
+/// for permission, and Core Audio waits for the answer inside
+/// `AudioDeviceCreateIOProcIDWithBlock` (measured on macOS 27). So the render
+/// callback is only created when the app first plays, and all starting and
+/// stopping happens on a queue of its own: the menu bar never freezes on a prompt.
 final class AppVolumeTap {
 
     let processObjectIDs: [AudioObjectID]
@@ -31,8 +37,18 @@ final class AppVolumeTap {
     /// The output device this tap plays to. A different default output means a new tap.
     let outputUID: String
 
-    /// True while the render callback runs (and the purple dot shows).
+    /// True from `startIO()` until `stopIO()`: we want the tap read.
     private(set) var isRunning = false
+
+    /// True once the render callback really runs: after the permission prompt,
+    /// if macOS showed one. False again after `stopIO()`.
+    private(set) var isReading = false
+
+    /// Called once the render callback runs, after each `startIO()`.
+    var onStartedReading: @MainActor () -> Void = {}
+
+    /// Called if the render callback couldn't be started.
+    var onFailure: @MainActor () -> Void = {}
 
     /// The slider level: 0.0 = silent, 1.0 = the app's normal level.
     var volume: Float {
@@ -59,7 +75,20 @@ final class AppVolumeTap {
     private var tapID = AudioObjectID.unknown
     private let tapUUID = UUID()
     private var aggregateDeviceID = AudioObjectID.unknown
-    private var ioProcID: AudioDeviceIOProcID?
+
+    /// Starts, stops and teardown run here, one after another, in order.
+    private let ioQueue = DispatchQueue(label: "Faders.tap-io", qos: .userInitiated)
+
+    /// The render callback's state. Only touched on `ioQueue`.
+    private final class IOState: @unchecked Sendable {
+        var procID: AudioDeviceIOProcID?
+        var isStarted = false
+    }
+    private let io = IOState()
+
+    /// Counts `startIO()` calls, so a start that finishes after a newer one was
+    /// asked for doesn't report back.
+    private var starts = 0
 
     private static let log = Logger(subsystem: "Faders", category: "AppVolumeTap")
 
@@ -78,9 +107,7 @@ final class AppVolumeTap {
             try createAggregateDevice(output: output)
             try waitUntilReady(output: output)
             let layout = try readLayout(output: output)
-            let renderer = TapRenderer(gain: Self.gain(forLevel: volume), layout: layout)
-            self.renderer = renderer
-            try createRenderCallback(with: renderer)
+            renderer = TapRenderer(gain: Self.gain(forLevel: volume), layout: layout)
         } catch {
             Self.log.error("Could not control \(appName, privacy: .public): \(error.localizedDescription, privacy: .public)")
             destroy()
@@ -92,19 +119,57 @@ final class AppVolumeTap {
 
     // MARK: - Reading the tap
 
-    /// Starts playing the app through us, at our volume. Throws if Core Audio
-    /// refuses — most commonly because the audio-capture permission was denied.
-    func startIO() throws {
-        guard !isRunning, let ioProcID else { return }
-        try check(AudioDeviceStart(aggregateDeviceID, ioProcID), "start reading \(appName)")
+    /// Starts playing the app through us, at our volume. Returns at once; the
+    /// tap reports back through `onStartedReading` or `onFailure`.
+    func startIO() {
+        guard !isRunning, aggregateDeviceID.isValid, let renderer else { return }
         isRunning = true
+        starts += 1
+        let (device, io, appName, start) = (aggregateDeviceID, io, appName, starts)
+
+        ioQueue.async { [weak self] in
+            do {
+                if io.procID == nil {
+                    // Capture only the renderer, never `self`, on the audio thread.
+                    let renderQueue = DispatchQueue(label: "Faders.render", qos: .userInteractive)
+                    try Self.check(
+                        AudioDeviceCreateIOProcIDWithBlock(&io.procID, device, renderQueue) { _, input, _, output, _ in
+                            renderer.render(from: input, to: output)
+                        },
+                        "create render callback"   // the permission prompt waits in here
+                    )
+                }
+                if !io.isStarted {
+                    try Self.check(AudioDeviceStart(device, io.procID), "start reading \(appName)")
+                    io.isStarted = true
+                }
+                DispatchQueue.main.async {
+                    guard let self, self.isRunning, self.starts == start else { return }   // stopped meanwhile
+                    self.isReading = true
+                    self.onStartedReading()
+                }
+            } catch {
+                Self.log.error("Could not start \(appName, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                DispatchQueue.main.async {
+                    guard let self, self.starts == start else { return }
+                    self.onFailure()
+                }
+            }
+        }
     }
 
     /// Stops reading the tap. The app stays muted, and the purple dot goes away.
     func stopIO() {
-        guard isRunning, let ioProcID else { return }
-        AudioDeviceStop(aggregateDeviceID, ioProcID)
+        guard isRunning else { return }
         isRunning = false
+        isReading = false
+        let (device, io) = (aggregateDeviceID, io)
+
+        ioQueue.async {
+            guard io.isStarted, let procID = io.procID else { return }
+            AudioDeviceStop(device, procID)
+            io.isStarted = false
+        }
     }
 
     // MARK: - Setup steps
@@ -119,7 +184,7 @@ final class AppVolumeTap {
         // render callback is stopped.
         description.muteBehavior = .muted
 
-        try check(AudioHardwareCreateProcessTap(description, &tapID), "create process tap")
+        try Self.check(AudioHardwareCreateProcessTap(description, &tapID), "create process tap")
     }
 
     private func createAggregateDevice(output: OutputDevice) throws {
@@ -145,7 +210,7 @@ final class AppVolumeTap {
             ],
         ]
 
-        try check(
+        try Self.check(
             AudioHardwareCreateAggregateDevice(description as CFDictionary, &aggregateDeviceID),
             "create aggregate device"
         )
@@ -226,35 +291,27 @@ final class AppVolumeTap {
         return layout
     }
 
-    private func createRenderCallback(with renderer: TapRenderer) throws {
-        // Capture only the renderer, never `self`, on the audio thread.
-        let queue = DispatchQueue(label: "Faders.render", qos: .userInteractive)
-
-        try check(
-            AudioDeviceCreateIOProcIDWithBlock(&ioProcID, aggregateDeviceID, queue) { _, input, _, output, _ in
-                renderer.render(from: input, to: output)
-            },
-            "create render callback"
-        )
-    }
-
     // MARK: - Teardown (reverse order of setup)
 
-    /// Gives the app back its normal audio path (at its own full volume).
+    /// Gives the app back its normal audio path (at its own full volume), right
+    /// after any start or stop still in progress.
     func destroy() {
-        stopIO()
-        if aggregateDeviceID.isValid, let ioProcID {
-            AudioDeviceDestroyIOProcID(aggregateDeviceID, ioProcID)
-        }
-        ioProcID = nil
+        isRunning = false
+        isReading = false
+        let (device, tap, io) = (aggregateDeviceID, tapID, io)
+        aggregateDeviceID = .unknown
+        tapID = .unknown
 
-        if aggregateDeviceID.isValid {
-            AudioHardwareDestroyAggregateDevice(aggregateDeviceID)
-            aggregateDeviceID = .unknown
-        }
-        if tapID.isValid {
-            AudioHardwareDestroyProcessTap(tapID)   // the app's normal audio path comes back
-            tapID = .unknown
+        ioQueue.async {
+            if let procID = io.procID {
+                if io.isStarted { AudioDeviceStop(device, procID) }
+                AudioDeviceDestroyIOProcID(device, procID)
+            }
+            io.procID = nil
+            io.isStarted = false
+
+            if device.isValid { AudioHardwareDestroyAggregateDevice(device) }
+            if tap.isValid { AudioHardwareDestroyProcessTap(tap) }   // the app's normal audio path comes back
         }
     }
 
@@ -277,7 +334,7 @@ final class AppVolumeTap {
         }
     }
 
-    private func check(_ status: OSStatus, _ step: String) throws {
+    private static func check(_ status: OSStatus, _ step: String) throws {
         guard status == noErr else { throw TapError(step: step, status: status) }
     }
 }
