@@ -25,6 +25,7 @@
 - **Master volume** for your current speakers or headphones, right on top.
 - **Remembers your levels** — set Slack to 30% once and it stays there.
 - **Follows your output** — plug in headphones or switch to AirPods and everything keeps working.
+- **Swipe to adjust** — two fingers on the trackpad over a row move its slider, the same way pages scroll (it follows your Natural scrolling setting).
 - **Sliders that feel even** — 50% sounds about half as loud, like the system volume.
 - **Keyboard and VoiceOver** — <kbd>Tab</kbd> moves between rows, <kbd>←</kbd> <kbd>→</kbd> change the level, <kbd>M</kbd> mutes.
 - **Native look** — one Liquid Glass panel drawn by macOS itself, so it follows your appearance, Reduce Transparency and Increase Contrast settings.

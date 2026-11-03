@@ -98,15 +98,17 @@ struct MixerView: View {
     private var appList: some View {
         if mixer.apps.isEmpty {
             EmptyMessage(symbol: "speaker.zzz", text: "No apps are playing sound")
-        } else if mixer.apps.count <= 5 {
+        } else if !listScrolls {
             appRows
         } else {
-            // Lots of apps: keep the panel a sensible height and scroll.
             ScrollView { appRows }
                 .scrollIndicators(.never)
                 .frame(height: 360)
         }
     }
+
+    /// Lots of apps: the list keeps the panel a sensible height and scrolls.
+    private var listScrolls: Bool { mixer.apps.count > 5 }
 
     private var appRows: some View {
         VStack(spacing: 8) {
@@ -115,7 +117,9 @@ struct MixerView: View {
                     title: app.name,
                     volume: Binding(get: { mixer.volume(for: app) }, set: { mixer.setVolume($0, for: app) }),
                     isMuted: mixer.isMuted(app),
-                    onToggleMute: { mixer.toggleMute(app) }
+                    onToggleMute: { mixer.toggleMute(app) },
+                    // With lots of apps the list scrolls: up/down swipes are for that.
+                    allowsVerticalSwipes: !listScrolls
                 ) {
                     Image(nsImage: app.icon)
                         .resizable()

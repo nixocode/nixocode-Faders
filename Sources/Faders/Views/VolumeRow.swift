@@ -7,8 +7,11 @@ struct VolumeRow<Icon: View>: View {
     @Binding var volume: Float
     let isMuted: Bool
     let onToggleMute: () -> Void
-    /// Told when a drag on the slider starts (true) and ends (false).
+    /// Told when a drag on the slider, or a swipe over the row, starts (true)
+    /// and ends (false).
     var onEditingChanged: (Bool) -> Void = { _ in }
+    /// Whether up/down swipes change the level. False inside a scroll view.
+    var allowsVerticalSwipes = true
     @ViewBuilder var icon: Icon
 
     private var percent: Int { Int((volume * 100).rounded()) }
@@ -43,6 +46,8 @@ struct VolumeRow<Icon: View>: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 11)
         .rowBackground()
+        // A two-finger swipe anywhere on the row moves its slider.
+        .scrollToAdjust($volume, isEnabled: !isMuted, allowsVertical: allowsVerticalSwipes, onEditingChanged: onEditingChanged)
         // The keyboard reaches whole rows with Tab, even with macOS's "Keyboard
         // navigation" off (the default), which otherwise keeps sliders and
         // buttons out of reach. ← → change the level and M mutes.
