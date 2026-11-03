@@ -45,6 +45,16 @@ struct MixerView: View {
                 DispatchQueue.main.async { focusedRow = nil }
             }
         }
+        // Rows are focusable so Tab reaches them. That also lets a click on a
+        // row's mute button focus the row, and macOS sometimes focuses the
+        // first row on opening after the line above has run. Like any Mac
+        // control, a row should only show a focus ring when the keyboard put
+        // it there.
+        .onChange(of: focusedRow) { _, row in
+            if row != nil, NSApp.currentEvent?.type != .keyDown {
+                focusedRow = nil
+            }
+        }
     }
 
     // MARK: - Sections
