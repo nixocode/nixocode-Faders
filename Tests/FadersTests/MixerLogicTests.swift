@@ -1,6 +1,31 @@
 import XCTest
 @testable import Faders
 
+/// The slider → loudness curve.
+final class VolumeCurveTests: XCTestCase {
+
+    func testEndsStayPut() {
+        XCTAssertEqual(AppVolumeTap.gain(forLevel: 0), 0)
+        XCTAssertEqual(AppVolumeTap.gain(forLevel: 1), 1)
+    }
+
+    /// Half way sounds about half as loud: a quarter of the signal, −12 dB.
+    func testHalfWayIsAQuarterOfTheSignal() {
+        XCTAssertEqual(AppVolumeTap.gain(forLevel: 0.5), 0.25, accuracy: 1e-6)
+    }
+
+    func testOutOfRangeLevelsAreClamped() {
+        XCTAssertEqual(AppVolumeTap.gain(forLevel: -0.2), 0)
+        XCTAssertEqual(AppVolumeTap.gain(forLevel: 1.5), 1)
+    }
+
+    func testAlwaysGetsLouderAsTheSliderGoesUp() {
+        let gains = stride(from: Float(0), through: 1, by: 0.05).map(AppVolumeTap.gain(forLevel:))
+        XCTAssertEqual(gains, gains.sorted())
+        XCTAssertEqual(Set(gains).count, gains.count)
+    }
+}
+
 /// How the renderer tells real sound from the silence macOS hands over when
 /// Faders isn't allowed to hear an app.
 final class HeardSoundTests: XCTestCase {

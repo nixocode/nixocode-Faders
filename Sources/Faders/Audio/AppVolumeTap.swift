@@ -34,13 +34,26 @@ final class AppVolumeTap {
     /// True while the render callback runs (and the purple dot shows).
     private(set) var isRunning = false
 
-    /// 0.0 = silent, 1.0 = the app's normal level.
+    /// The slider level: 0.0 = silent, 1.0 = the app's normal level.
     var volume: Float {
-        didSet { renderer?.targetGain = min(max(volume, 0), 1) }
+        didSet { renderer?.targetGain = Self.gain(forLevel: volume) }
     }
 
     /// True once real sound has come through the tap (see `TapRenderer.hasHeardSound`).
     var hasHeardSound: Bool { renderer?.hasHeardSound ?? false }
+
+    /// Turns a slider level into the factor each sample is multiplied by.
+    ///
+    /// We hear loudness on a roughly logarithmic scale, so multiplying by the
+    /// slider level directly puts nearly all the audible change at the bottom of
+    /// the slider: at 50% an app still sounds about two-thirds as loud. Squaring
+    /// spreads it out: 50% becomes a quarter of the signal (−12 dB), which sounds
+    /// a little under half as loud, and the slider feels even all the way, like
+    /// the system volume slider above it.
+    static func gain(forLevel level: Float) -> Float {
+        let level = min(max(level, 0), 1)
+        return level * level
+    }
 
     private var renderer: TapRenderer?
     private var tapID = AudioObjectID.unknown
@@ -65,7 +78,7 @@ final class AppVolumeTap {
             try createAggregateDevice(output: output)
             try waitUntilReady(output: output)
             let layout = try readLayout(output: output)
-            let renderer = TapRenderer(gain: min(max(volume, 0), 1), layout: layout)
+            let renderer = TapRenderer(gain: Self.gain(forLevel: volume), layout: layout)
             self.renderer = renderer
             try createRenderCallback(with: renderer)
         } catch {
