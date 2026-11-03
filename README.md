@@ -28,7 +28,7 @@
 - **Sliders that feel even** — 50% sounds about half as loud, like the system volume.
 - **Keyboard and VoiceOver** — <kbd>Tab</kbd> moves between rows, <kbd>←</kbd> <kbd>→</kbd> change the level, <kbd>M</kbd> mutes.
 - **Native look** — one Liquid Glass panel drawn by macOS itself, so it follows your appearance, Reduce Transparency and Increase Contrast settings.
-- **Lightweight** — under 1 MB, no Dock icon, about 20 MB of memory, and no CPU at all while nothing is playing.
+- **Lightweight** — a download under 1 MB, no Dock icon, under 40 MB of memory, and no CPU at all while nothing is playing.
 - **Free and open source** (MIT).
 
 ## Install
@@ -57,7 +57,7 @@ To update later: `cd Faders && git pull && ./scripts/install.sh`.
 
 ### First use
 
-Click the three-sliders icon in your menu bar. The first time you turn an app down, macOS asks whether Faders may access other apps' audio. Click **Allow**: that's what lets Faders change an app's level. Because Faders isn't signed with a paid developer certificate, macOS may ask again after you update it.
+Click the three-sliders icon in your menu bar. The first time you turn an app down, macOS asks whether Faders may access other apps' audio (that app stays quiet until you answer). Click **Allow**: that's what lets Faders change an app's level. Because Faders isn't signed with a paid developer certificate, macOS may ask again after you update it.
 
 If you click **Don't Allow**, nothing breaks: your apps keep playing normally and Faders shows a link to the setting. You can change it any time in **System Settings → Privacy & Security → Screen & System Audio Recording**.
 
@@ -69,7 +69,7 @@ If you click **Don't Allow**, nothing breaks: your apps keep playing normally an
 - **Apps you don't touch are left alone.** Faders only steps in for an app once you move its slider away from 100%.
 - **Your sound always comes back.** The audio taps Faders creates are private to it, and macOS removes them the moment Faders quits or crashes, so every app goes back to playing normally. **Reset All** does the same at any time.
 - **It never leaves an app silent by mistake.** If macOS doesn't let Faders hear an app (for example, you clicked Don't Allow), Faders notices that only silence comes through, lets the app go and shows the permission hint.
-- **Small enough to read.** About 1,700 lines of commented Swift and one dependency, Apple's own [swift-atomics](https://github.com/apple/swift-atomics). Release builds are made by [GitHub Actions](.github/workflows/build.yml) from this public source.
+- **Small enough to read.** About 1,900 lines of commented Swift and one dependency, Apple's own [swift-atomics](https://github.com/apple/swift-atomics). Release builds are made by [GitHub Actions](.github/workflows/build.yml) from this public source.
 
 ## How it works
 
