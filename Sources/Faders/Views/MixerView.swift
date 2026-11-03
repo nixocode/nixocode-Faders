@@ -111,7 +111,7 @@ struct MixerView: View {
             // Opens System Settings → Privacy & Security → Screen & System Audio Recording.
             NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AudioCapture")!)
         } label: {
-            Label("Allow Faders to control app audio in System Settings", systemImage: "lock.shield")
+            Label("Faders can't hear app audio. Allow it in System Settings, then move the slider again.", systemImage: "lock.shield")
                 .font(.subheadline)
                 .multilineTextAlignment(.leading)
         }

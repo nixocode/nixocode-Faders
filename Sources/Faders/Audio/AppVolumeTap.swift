@@ -39,6 +39,9 @@ final class AppVolumeTap {
         didSet { renderer?.targetGain = min(max(volume, 0), 1) }
     }
 
+    /// True once real sound has come through the tap (see `TapRenderer.hasHeardSound`).
+    var hasHeardSound: Bool { renderer?.hasHeardSound ?? false }
+
     private var renderer: TapRenderer?
     private var tapID = AudioObjectID.unknown
     private let tapUUID = UUID()

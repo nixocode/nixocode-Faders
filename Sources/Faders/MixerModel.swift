@@ -1,6 +1,7 @@
 import AppKit
 import CoreAudio
 import Observation
+import os
 
 /// The brain of the app: knows which apps are playing, what volume each one
 /// should have, and keeps the audio taps in sync with the sliders.
@@ -27,6 +28,13 @@ import Observation
 ///                                 instead of loud (~150 ms on Bluetooth)
 ///   • quiet for a few seconds   → stop reading: the dot turns off
 ///   • turned all the way down   → never read at all
+///
+/// **If we're not allowed to listen.** Without the audio-recording permission,
+/// macOS reports no error: every call succeeds and the tap simply delivers
+/// silence. A muted tap would then keep its app quiet for good. So until some
+/// tap has delivered real sound, we check: if an app plays for several seconds
+/// and its tap hears nothing, we let the app go (it plays normally again) and
+/// show the permission hint. See `checkAccess`.
 @MainActor
 @Observable
 final class MixerModel {
@@ -60,6 +68,10 @@ final class MixerModel {
     /// skipping a track doesn't flicker the purple dot.
     private let stopReadingAfterSilence: TimeInterval = 3
 
+    /// How long an app must play into a silent tap before we decide macOS isn't
+    /// letting us hear it. Generous, so a quiet intro or a slow click on the
+    /// permission prompt isn't mistaken for a refusal.
+    private let silenceMeansNoAccess: TimeInterval = 8
 
     // MARK: Private state
 
@@ -74,6 +86,15 @@ final class MixerModel {
 
     /// Apps we failed to control; we don't retry them until the user does.
     private var failedAppIDs: Set<String> = []
+
+    /// True once any tap has delivered real sound: proof that macOS lets us
+    /// hear app audio, so silence from then on is just silence.
+    @ObservationIgnored private var hasAudioAccess = false
+
+    /// Apps whose tap we're currently checking for sound (see `checkAccess`).
+    @ObservationIgnored private var accessChecks: Set<String> = []
+
+    private static let log = Logger(subsystem: "Faders", category: "Mixer")
 
     /// Tells us the moment an app starts or stops playing (see `ProcessMonitor`).
     @ObservationIgnored private var processMonitor: ProcessMonitor?
@@ -232,9 +253,11 @@ final class MixerModel {
             do {
                 try tap.startIO()
             } catch {
+                Self.log.error("Could not start \(app.name, privacy: .public): \(error.localizedDescription, privacy: .public)")
                 giveUp(on: app.id)   // better to hear the app at 100% than not at all
                 return
             }
+            if app.isPlaying { checkAccess(app, tap: tap) }
         } else {
             tap.stopIO()
         }
@@ -246,6 +269,28 @@ final class MixerModel {
             DispatchQueue.main.asyncAfter(deadline: .now() + stopReadingAfterSilence - silentFor + 0.1) { [weak self] in
                 self?.refresh()
             }
+        }
+    }
+
+    /// Makes sure the tap actually hears the app (see "If we're not allowed to
+    /// listen" above). Runs until the first sound arrives, then never again.
+    private func checkAccess(_ app: AudioApp, tap: AppVolumeTap) {
+        guard !hasAudioAccess, !accessChecks.contains(app.id) else { return }
+        accessChecks.insert(app.id)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + silenceMeansNoAccess) { [weak self, weak tap] in
+            guard let self else { return }
+            self.accessChecks.remove(app.id)
+            guard let tap, self.taps[app.id] === tap else { return }   // replaced or released meanwhile
+
+            if tap.hasHeardSound {
+                self.hasAudioAccess = true
+            } else if tap.isRunning, AudioAppScanner.isPlaying(tap.processObjectIDs) {
+                Self.log.error("\(app.name, privacy: .public) played for \(Int(self.silenceMeansNoAccess)) s and Faders heard only silence: no permission to hear app audio?")
+                self.giveUp(on: app.id)   // the app plays normally again; the panel shows the hint
+            }
+            // Otherwise the app stopped playing before we could tell; we check
+            // again the next time it plays.
         }
     }
 

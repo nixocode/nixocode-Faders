@@ -15,8 +15,8 @@ import CoreAudio
 /// per channel, on either side. Sample rates always match, because the
 /// aggregate device resamples the tap to the output's rate before we see it.
 final class TapRenderer: @unchecked Sendable {
-    // @unchecked: `targetBits` is atomic, `layout` never changes, and `current`
-    // is only ever touched by the audio thread.
+    // @unchecked: `targetBits` and `heardBits` are atomic, `layout` never
+    // changes, and `current` is only ever touched by the audio thread.
 
     /// The gain the UI asked for. It's written on the main thread and read on the
     /// audio thread, so a plain `Float` would be a data race: the compiler is free
@@ -26,6 +26,10 @@ final class TapRenderer: @unchecked Sendable {
 
     /// The gain applied at the end of the previous buffer (audio thread only).
     private var current: Float
+
+    /// Set by the audio thread the first time the tap delivers anything but
+    /// silence (see `hasHeardSound`).
+    private let heardBits = UnsafeAtomic<Bool>.create(false)
 
     let layout: RenderLayout
 
@@ -37,7 +41,10 @@ final class TapRenderer: @unchecked Sendable {
         self.layout = layout
     }
 
-    deinit { targetBits.destroy() }
+    deinit {
+        targetBits.destroy()
+        heardBits.destroy()
+    }
 
     /// 0.0 = silent, 1.0 = unchanged. Safe to set from any thread.
     var targetGain: Float {
@@ -47,12 +54,22 @@ final class TapRenderer: @unchecked Sendable {
         set { targetBits.store(newValue.bitPattern, ordering: .relaxed) }
     }
 
+    /// True once the tap has delivered real sound. Without the audio-recording
+    /// permission macOS doesn't report an error, it just hands over silence, so
+    /// this is the only way to tell that we're allowed to hear the app.
+    var hasHeardSound: Bool { heardBits.load(ordering: .relaxed) }
+
     /// Called by Core Audio for every buffer.
     func render(from input: UnsafePointer<AudioBufferList>, to output: UnsafeMutablePointer<AudioBufferList>) {
         let inputBuffers = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: input))
         let outputBuffers = UnsafeMutableAudioBufferListPointer(output)
         let source = StereoSource(inputBuffers, tapBuffers: layout.tapBuffers)
         let end = targetGain
+
+        // Only until the first sound arrives; after that it's one atomic read.
+        if let source, !hasHeardSound, source.containsSound {
+            heardBits.store(true, ordering: .relaxed)
+        }
 
         var firstChannel = 0   // index of this buffer's first channel, counted across all output buffers
         for buffer in outputBuffers {
@@ -169,6 +186,12 @@ private struct StereoSource {
 
     func left(_ frame: Int) -> Float { leftSamples[frame * leftStride] }
     func right(_ frame: Int) -> Float { rightSamples[frame * rightStride] }
+
+    /// True if any sample isn't exactly zero.
+    var containsSound: Bool {
+        for frame in 0..<frames where left(frame) != 0 || right(frame) != 0 { return true }
+        return false
+    }
 }
 
 /// A straight-line glide from one gain to another across one buffer, so moving
