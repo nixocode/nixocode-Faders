@@ -74,3 +74,59 @@ final class HeardSoundTests: XCTestCase {
         XCTAssertFalse(renderer.hasHeardSound)
     }
 }
+
+/// Grouping helper processes with the app they belong to, by where they live.
+final class BundleContainmentTests: XCTestCase {
+
+    private let apps = ["/Applications/Google Chrome.app", "/Applications/Discord.app", "/Applications/Disc.app"]
+
+    func testHelperInsideItsApp() {
+        let helper = "/Applications/Discord.app/Contents/Frameworks/Discord Helper (Renderer).app/Contents/MacOS/Discord Helper (Renderer)"
+        XCTAssertEqual(AudioAppScanner.bundle(containing: helper, among: apps), "/Applications/Discord.app")
+    }
+
+    /// "/Applications/Disc.app" must not claim "/Applications/Disc.app2/…".
+    func testNamePrefixIsNotContainment() {
+        XCTAssertNil(AudioAppScanner.bundle(containing: "/Applications/Disc.app2/Contents/MacOS/x", among: apps))
+    }
+
+    func testToolOutsideAnyApp() {
+        XCTAssertNil(AudioAppScanner.bundle(containing: "/usr/bin/afplay", among: apps))
+    }
+
+    func testInnermostBundleWins() {
+        let nested = ["/Applications/Suite.app", "/Applications/Suite.app/Contents/Applications/Player.app"]
+        let path = "/Applications/Suite.app/Contents/Applications/Player.app/Contents/MacOS/Player"
+        XCTAssertEqual(AudioAppScanner.bundle(containing: path, among: nested), nested[1])
+    }
+}
+
+/// Giving WebKit's per-app processes to their app.
+final class WebKitOwnerTests: XCTestCase {
+
+    private let apps = ["Safari", "Finder", "Mail", "Safari Technology Preview"]
+
+    func testNamedAfterItsApp() {
+        XCTAssertEqual(AudioAppScanner.appName(in: "Safari Graphics and Media", among: apps), "Safari")
+        XCTAssertEqual(AudioAppScanner.appName(in: "Mail Graphics and Media", among: apps), "Mail")
+    }
+
+    func testOtherWordOrder() {
+        XCTAssertEqual(AudioAppScanner.appName(in: "Gráficos y multimedia de Safari", among: apps), "Safari")
+    }
+
+    func testLongestNameWins() {
+        XCTAssertEqual(
+            AudioAppScanner.appName(in: "Safari Technology Preview Graphics and Media", among: apps),
+            "Safari Technology Preview"
+        )
+    }
+
+    func testWholeWordsOnly() {
+        XCTAssertNil(AudioAppScanner.appName(in: "Mailbox Graphics and Media", among: apps))
+    }
+
+    func testNotAnApp() {
+        XCTAssertNil(AudioAppScanner.appName(in: "WebThumbnailExtension Graphics and Media", among: apps))
+    }
+}
