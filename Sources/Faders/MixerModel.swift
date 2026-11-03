@@ -273,7 +273,10 @@ final class MixerModel {
             // The tap starts reading in the background; these tell us how it went.
             newTap.onStartedReading = { [weak self, weak newTap] in
                 guard let self, let newTap, self.taps[app.id] === newTap else { return }
-                if AudioAppScanner.isPlaying(newTap.processObjectIDs) { self.checkAccess(app, tap: newTap) }
+                // Not "if it's playing": a new tap can make the app restart its
+                // output, so right now it may briefly report that it isn't. The
+                // check looks again when it ends and only acts if it's playing then.
+                self.checkAccess(app, tap: newTap)
             }
             newTap.onFailure = { [weak self, weak newTap] in
                 guard let self, let newTap, self.taps[app.id] === newTap else { return }
