@@ -99,11 +99,20 @@ struct MixerView: View {
                 Menu {
                     outputChoices
                 } label: {
-                    Text(output.name)
+                    // The up-down chevrons say "pop-up menu", as on any Mac.
+                    HStack(spacing: 4) {
+                        Text(output.name)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .accessibilityHidden(true)   // VoiceOver says "pop-up button" already
+                    }
+                    .contentShape(Rectangle())
                 }
                 .menuStyle(.button)
                 .buttonStyle(.plain)
-                .fixedSize()
                 .help("Choose where sound plays")
             }
             .focused($focusedRow, equals: "output")
