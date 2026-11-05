@@ -187,12 +187,17 @@ final class AppVolumeTap {
         try Self.check(AudioHardwareCreateProcessTap(description, &tapID), "create process tap")
     }
 
+    /// Starts the unique ID of every aggregate device Faders makes. Private
+    /// devices are hidden from other apps but not from Faders itself, so the
+    /// output menu uses this to leave them out.
+    static let aggregateUIDPrefix = "com.faders.aggregate."
+
     private func createAggregateDevice(output: OutputDevice) throws {
         let tapUID = tapUUID.uuidString
 
         let description: [String: Any] = [
             kAudioAggregateDeviceNameKey: "Faders – \(appName)",
-            kAudioAggregateDeviceUIDKey: "com.faders.aggregate.\(UUID().uuidString)",
+            kAudioAggregateDeviceUIDKey: Self.aggregateUIDPrefix + UUID().uuidString,
             kAudioAggregateDeviceIsPrivateKey: true,      // hidden from Sound settings
             kAudioAggregateDeviceIsStackedKey: false,
             kAudioAggregateDeviceTapAutoStartKey: true,

@@ -23,7 +23,17 @@ struct MixerView: View {
         VStack(alignment: .leading, spacing: 16) {
             header
             MixerSection("Output") { outputRow }
-            MixerSection("Apps") { appList }
+            MixerSection("Apps") {
+                appList
+            } accessory: {
+                if mixer.hiddenAppCount > 0 {
+                    Button("\(mixer.hiddenAppCount) Hidden", action: mixer.showHiddenApps)
+                        .buttonStyle(.borderless)
+                        .controlSize(.small)
+                        .foregroundStyle(.secondary)
+                        .help("Show the apps you hid")
+                }
+            }
             if mixer.permissionProblem { permissionHint }
             Divider().opacity(0.4)
             footer
@@ -77,55 +87,103 @@ struct MixerView: View {
     private var outputRow: some View {
         if let output = mixer.output, output.supportsVolume {
             VolumeRow(
-                title: output.name,
+                name: output.name,
                 volume: Binding(get: { mixer.outputVolume }, set: { mixer.setOutputVolume($0) }),
                 isMuted: mixer.outputMuted,
                 onToggleMute: { mixer.setOutputMuted(!mixer.outputMuted) },
                 onEditingChanged: mixer.setAdjustingOutputVolume
             ) {
                 DeviceIcon(symbolName: output.symbolName)
+            } title: {
+                // The name opens a menu of outputs, like Control Center's Sound.
+                Menu {
+                    outputChoices
+                } label: {
+                    Text(output.name)
+                }
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .fixedSize()
+                .help("Choose where sound plays")
             }
             .focused($focusedRow, equals: "output")
+            .contextMenu {
+                outputChoices
+                Divider()
+                Button(mixer.outputMuted ? "Unmute" : "Mute") { mixer.setOutputMuted(!mixer.outputMuted) }
+                Button("Sound Settings…", action: openSoundSettings)
+            }
         } else {
             EmptyMessage(
                 symbol: "speaker.badge.exclamationmark",
                 text: mixer.output.map { "\($0.name) has no volume control" } ?? "No output device"
             )
+            .contextMenu { outputChoices }   // still lets you switch to one that has
         }
+    }
+
+    /// Every output, with a checkmark on the current one.
+    private var outputChoices: some View {
+        Picker("Output", selection: Binding(
+            get: { mixer.output?.uid ?? "" },
+            set: { uid in
+                if let device = mixer.outputDevices.first(where: { $0.uid == uid }) { mixer.selectOutput(device) }
+            }
+        )) {
+            ForEach(mixer.outputDevices) { device in
+                Label(device.name, systemImage: device.symbolName).tag(device.uid)
+            }
+        }
+        .pickerStyle(.inline)
+        .labelsHidden()
     }
 
     @ViewBuilder
     private var appList: some View {
         if mixer.apps.isEmpty {
             EmptyMessage(symbol: "speaker.zzz", text: "No apps are playing sound")
-        } else if !listScrolls {
+        } else if mixer.apps.count <= 5 {
             appRows
         } else {
+            // Lots of apps: keep the panel a sensible height and scroll, with
+            // the system's scroll bars (shown while scrolling, by default).
             ScrollView { appRows }
-                .scrollIndicators(.never)
-                .frame(height: 360)
+                .softScrollEdges()
+                .frame(height: listHeight)
         }
     }
 
-    /// Lots of apps: the list keeps the panel a sensible height and scrolls.
-    private var listScrolls: Bool { mixer.apps.count > 5 }
+    /// About five and a half rows, so the cut-off one shows there's more, and
+    /// less on a short screen so the panel always fits.
+    private var listHeight: CGFloat {
+        let screenHeight = NSScreen.main?.visibleFrame.height ?? 900
+        return min(360, max(180, screenHeight - 400))
+    }
 
     private var appRows: some View {
         VStack(spacing: 8) {
             ForEach(mixer.apps) { app in
                 VolumeRow(
-                    title: app.name,
+                    name: app.name,
                     volume: Binding(get: { mixer.volume(for: app) }, set: { mixer.setVolume($0, for: app) }),
                     isMuted: mixer.isMuted(app),
-                    onToggleMute: { mixer.toggleMute(app) },
-                    // With lots of apps the list scrolls: up/down swipes are for that.
-                    allowsVerticalSwipes: !listScrolls
+                    onToggleMute: { mixer.toggleMute(app) }
                 ) {
                     Image(nsImage: app.icon)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                 }
                 .focused($focusedRow, equals: app.id)
+                .contextMenu {
+                    Button(mixer.isMuted(app) ? "Unmute" : "Mute") { mixer.toggleMute(app) }
+                    Button("Reset to 100%") { mixer.reset(app) }
+                        .disabled(!mixer.hasCustomLevel(app))
+                    Divider()
+                    Button("Hide \(app.name)") { mixer.hide(app) }
+                    if mixer.hasHiddenApps {
+                        Button("Show Hidden Apps", action: mixer.showHiddenApps)
+                    }
+                }
                 .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.96)))
             }
         }
@@ -152,9 +210,7 @@ struct MixerView: View {
             .toggleStyle(.switch)
             .controlSize(.mini)
             Spacer()
-            Button("Sound Settings…") {
-                NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Sound-Settings.extension")!)
-            }
+            Button("Sound Settings…", action: openSoundSettings)
             Button("Quit") { NSApp.terminate(nil) }
                 .keyboardShortcut("q")
         }
@@ -162,27 +218,57 @@ struct MixerView: View {
         .font(.subheadline)
         .foregroundStyle(.secondary)
     }
+
+    private func openSoundSettings() {
+        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Sound-Settings.extension")!)
+    }
 }
 
 // MARK: - Small building blocks
 
-/// A small-caps caption ("Output", "Apps") with its content underneath.
-private struct MixerSection<Content: View>: View {
+/// A small-caps caption ("Output", "Apps") with its content underneath, and
+/// optionally a small control at the caption's far end.
+private struct MixerSection<Content: View, Accessory: View>: View {
     let title: String
     @ViewBuilder var content: Content
+    @ViewBuilder var accessory: Accessory
 
-    init(_ title: String, @ViewBuilder content: () -> Content) {
+    init(_ title: String, @ViewBuilder content: () -> Content, @ViewBuilder accessory: () -> Accessory) {
         self.title = title
         self.content = content()
+        self.accessory = accessory()
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.caption.weight(.semibold).smallCaps())
-                .foregroundStyle(.secondary)
-                .padding(.leading, 4)
+            HStack(alignment: .firstTextBaseline) {
+                Text(title)
+                    .font(.caption.weight(.semibold).smallCaps())
+                    .foregroundStyle(.secondary)
+                Spacer()
+                accessory
+            }
+            .padding(.horizontal, 4)
             content
+        }
+    }
+}
+
+extension MixerSection where Accessory == EmptyView {
+    init(_ title: String, @ViewBuilder content: () -> Content) {
+        self.init(title, content: content, accessory: { EmptyView() })
+    }
+}
+
+private extension View {
+    /// On macOS 26 and later, rows fade out softly at the list's top and bottom
+    /// edges as they scroll, the system's own scroll edge effect.
+    @ViewBuilder
+    func softScrollEdges() -> some View {
+        if #available(macOS 26.0, *) {
+            scrollEdgeEffectStyle(.soft, for: .vertical)
+        } else {
+            self
         }
     }
 }

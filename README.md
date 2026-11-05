@@ -22,14 +22,15 @@
 
 - **Per-app volume** — a slider for every app that's playing sound: Spotify, Safari, Zoom, games, anything.
 - **Mute any app** with one click, without touching the others.
-- **Master volume** for your current speakers or headphones, right on top.
+- **Master volume** for your current speakers or headphones, right on top. Click the device's name to switch outputs: speakers, AirPods, a display…
 - **Remembers your levels** — set Slack to 30% once and it stays there.
 - **Follows your output** — plug in headphones or switch to AirPods and everything keeps working.
-- **Swipe to adjust** — two fingers on the trackpad over a row move its slider, the same way pages scroll (it follows your Natural scrolling setting).
+- **Swipe to adjust** — swipe two fingers left or right over a row to move its slider, the same way pages scroll (it follows your Natural scrolling setting). Up and down scrolls the list when lots of apps are playing.
+- **Right-click a row** to mute it, put it back to 100%, or hide an app you never adjust.
 - **Sliders that feel even** — 50% sounds about half as loud, like the system volume.
 - **Keyboard and VoiceOver** — <kbd>Tab</kbd> moves between rows, <kbd>←</kbd> <kbd>→</kbd> change the level, <kbd>M</kbd> mutes.
 - **Native look** — one Liquid Glass panel drawn by macOS itself, so it follows your appearance, Reduce Transparency and Increase Contrast settings.
-- **Lightweight** — a download under 1 MB, no Dock icon, under 40 MB of memory, and no CPU at all while nothing is playing.
+- **Lightweight** — a download under 2 MB (most of it is the icon), no Dock icon, under 40 MB of memory, and no CPU at all while nothing is playing.
 - **Free and open source** (MIT).
 
 ## Install

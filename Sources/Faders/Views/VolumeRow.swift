@@ -2,17 +2,18 @@ import SwiftUI
 
 /// One line in the mixer: icon, name, percentage, slider and mute button.
 /// Used for both the output device and each app.
-struct VolumeRow<Icon: View>: View {
-    let title: String
+struct VolumeRow<Icon: View, Title: View>: View {
+    /// What the row controls, for VoiceOver ("Spotify volume").
+    let name: String
     @Binding var volume: Float
     let isMuted: Bool
     let onToggleMute: () -> Void
     /// Told when a drag on the slider, or a swipe over the row, starts (true)
     /// and ends (false).
     var onEditingChanged: (Bool) -> Void = { _ in }
-    /// Whether up/down swipes change the level. False inside a scroll view.
-    var allowsVerticalSwipes = true
     @ViewBuilder var icon: Icon
+    /// Usually just the name; the output row puts its device menu here.
+    @ViewBuilder var title: Title
 
     private var percent: Int { Int((volume * 100).rounded()) }
 
@@ -24,7 +25,7 @@ struct VolumeRow<Icon: View>: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text(title)
+                    title
                         .font(.body.weight(.semibold))
                         .lineLimit(1)
                     Spacer(minLength: 4)
@@ -37,7 +38,7 @@ struct VolumeRow<Icon: View>: View {
                 Slider(value: $volume, in: 0...1, onEditingChanged: onEditingChanged)
                     .controlSize(.small)
                     .disabled(isMuted)
-                    .accessibilityLabel("\(title) volume")
+                    .accessibilityLabel("\(name) volume")
                     .accessibilityValue(isMuted ? "Muted" : "\(percent) percent")
             }
 
@@ -46,8 +47,8 @@ struct VolumeRow<Icon: View>: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 11)
         .rowBackground()
-        // A two-finger swipe anywhere on the row moves its slider.
-        .scrollToAdjust($volume, isEnabled: !isMuted, allowsVertical: allowsVerticalSwipes, onEditingChanged: onEditingChanged)
+        // A two-finger sideways swipe anywhere on the row moves its slider.
+        .scrollToAdjust($volume, isEnabled: !isMuted, onEditingChanged: onEditingChanged)
         // The keyboard reaches whole rows with Tab, even with macOS's "Keyboard
         // navigation" off (the default), which otherwise keeps sliders and
         // buttons out of reach. ← → change the level and M mutes.
@@ -64,6 +65,23 @@ struct VolumeRow<Icon: View>: View {
         guard !isMuted else { return .ignored }
         volume = min(max(volume + step, 0), 1)
         return .handled
+    }
+}
+
+extension VolumeRow where Title == Text {
+    /// A row whose title is just its name.
+    init(
+        name: String,
+        volume: Binding<Float>,
+        isMuted: Bool,
+        onToggleMute: @escaping () -> Void,
+        onEditingChanged: @escaping (Bool) -> Void = { _ in },
+        @ViewBuilder icon: () -> Icon
+    ) {
+        self.init(
+            name: name, volume: volume, isMuted: isMuted, onToggleMute: onToggleMute,
+            onEditingChanged: onEditingChanged, icon: icon, title: { Text(name) }
+        )
     }
 }
 

@@ -47,8 +47,17 @@ final class MixerModel {
     private(set) var outputVolume: Float = 0
     private(set) var outputMuted = false
 
+    /// Every output you can switch to, for the menu on the output row.
+    private(set) var outputDevices: [OutputDevice] = []
+
     /// Apps listed in the mixer.
     private(set) var apps: [AudioApp] = []
+
+    /// How many apps would be listed but are hidden (right-click → Hide).
+    private(set) var hiddenAppCount = 0
+
+    /// Whether any app is hidden, listed right now or not.
+    var hasHiddenApps: Bool { !hiddenAppIDs.isEmpty }
 
     /// True when macOS refused to let us control an app — almost always because
     /// the audio-recording permission is off. The UI shows a hint.
@@ -89,6 +98,10 @@ final class MixerModel {
     /// Per-app settings, remembered between launches (keyed by `AudioApp.id`).
     private var settings: [String: AppSetting] = AppSetting.loadAll()
 
+    /// Apps the user hid, remembered between launches. A hidden app keeps its
+    /// level: hiding only takes its row out of the list.
+    private var hiddenAppIDs: Set<String> = HiddenApps.load()
+
     /// Taps, keyed by `AudioApp.id`: one for every running app with a custom level.
     @ObservationIgnored private var taps: [String: AppVolumeTap] = [:]
 
@@ -113,6 +126,9 @@ final class MixerModel {
     /// Tells us when the default output device changes (AirPods connected…).
     @ObservationIgnored private var outputDeviceListener: PropertyListener?
 
+    /// Tells us when outputs come and go, for the output menu.
+    @ObservationIgnored private var deviceListListener: PropertyListener?
+
     /// Tell us when the current device's volume or mute changes — from the volume
     /// keys, Control Center, or another app. Replaced whenever the device changes.
     @ObservationIgnored private var outputLevelListeners: [PropertyListener] = []
@@ -126,7 +142,11 @@ final class MixerModel {
         outputDeviceListener = PropertyListener(.system, kAudioHardwarePropertyDefaultOutputDevice) { [weak self] in
             self?.outputDeviceChanged()
         }
+        deviceListListener = PropertyListener(.system, kAudioHardwarePropertyDevices) { [weak self] in
+            self?.readOutputDevices()
+        }
         processMonitor = ProcessMonitor { [weak self] in self?.refresh() }
+        readOutputDevices()
         outputDeviceChanged()   // also does the first refresh
     }
 
@@ -134,6 +154,8 @@ final class MixerModel {
 
     func volume(for app: AudioApp) -> Float { settings[app.id]?.volume ?? 1 }
     func isMuted(_ app: AudioApp) -> Bool { settings[app.id]?.isMuted ?? false }
+    /// Anything other than 100% and not muted.
+    func hasCustomLevel(_ app: AudioApp) -> Bool { settings[app.id]?.isCustom ?? false }
 
     // MARK: - User actions
 
@@ -147,6 +169,30 @@ final class MixerModel {
     func toggleMute(_ app: AudioApp) {
         settings[app.id, default: AppSetting()].isMuted.toggle()
         userChangedSetting(of: app)
+    }
+
+    /// Puts one app back to 100%, not muted.
+    func reset(_ app: AudioApp) {
+        settings[app.id] = nil
+        userChangedSetting(of: app)
+    }
+
+    /// Takes an app's row out of the list. Its level still applies.
+    func hide(_ app: AudioApp) {
+        hiddenAppIDs.insert(app.id)
+        HiddenApps.save(hiddenAppIDs)
+        refresh()
+    }
+
+    func showHiddenApps() {
+        hiddenAppIDs.removeAll()
+        HiddenApps.save(hiddenAppIDs)
+        refresh()
+    }
+
+    /// Switches macOS to another output, like choosing it in Control Center.
+    func selectOutput(_ device: OutputDevice) {
+        device.makeDefault()   // `outputDeviceChanged` follows from the listener
     }
 
     func setOutputVolume(_ volume: Float) {
@@ -217,6 +263,11 @@ final class MixerModel {
         refresh()   // moves every tap over to the new device
     }
 
+    private func readOutputDevices() {
+        let devices = OutputDevice.all()
+        if devices != outputDevices { outputDevices = devices }
+    }
+
     private func readOutputLevels() {
         if !isAdjustingOutputVolume { outputVolume = output?.volume ?? 0 }
         outputMuted = output?.isMuted ?? false
@@ -233,10 +284,12 @@ final class MixerModel {
         for app in scanned where app.isPlaying { lastPlayed[app.id] = now }
 
         let listed = Set(apps.map(\.id))
-        let visible = scanned.filter {
+        let wanted = scanned.filter {
             $0.isPlaying || settings[$0.id]?.isCustom == true || (isPanelOpen && listed.contains($0.id))
         }
+        let visible = wanted.filter { !hiddenAppIDs.contains($0.id) }
         if visible != apps { apps = visible }
+        hiddenAppCount = wanted.count - visible.count
 
         // Apps that quit take their taps with them.
         let running = Set(scanned.map(\.id))
@@ -351,6 +404,19 @@ final class MixerModel {
 }
 
 // MARK: - Remembered settings
+
+/// The apps the user hid from the list, by `AudioApp.id`.
+enum HiddenApps {
+    private static let defaultsKey = "hiddenApps"
+
+    static func load(from defaults: UserDefaults = .standard) -> Set<String> {
+        Set(defaults.stringArray(forKey: defaultsKey) ?? [])
+    }
+
+    static func save(_ ids: Set<String>, to defaults: UserDefaults = .standard) {
+        defaults.set(ids.sorted(), forKey: defaultsKey)
+    }
+}
 
 /// What the user chose for one app. Saved in UserDefaults so Spotify stays at
 /// 40% tomorrow too.
