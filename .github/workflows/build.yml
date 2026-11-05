@@ -9,12 +9,16 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Read-only by default. Only the release job below may write, and it runs none
+# of the project's code: it just uploads the zip the build job made.
 permissions:
-  contents: write   # needed to publish releases
+  contents: read
 
 jobs:
   build:
     runs-on: macos-26
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -23,6 +27,9 @@ jobs:
           sw_vers
           xcodebuild -version
           swift --version
+
+      - name: Run tests
+        run: swift test
 
       - name: Build Faders.app
         run: ./scripts/build-app.sh
@@ -37,13 +44,24 @@ jobs:
         id: version
         run: echo "version=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' Support/Info.plist)" >> "$GITHUB_OUTPUT"
 
-      - name: Publish release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: softprops/action-gh-release@v2
+  release:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # needed to publish releases
+    steps:
+      - uses: actions/download-artifact@v4
         with:
-          tag_name: v${{ steps.version.outputs.version }}
-          name: Faders ${{ steps.version.outputs.version }}
+          name: Faders
+
+      - name: Publish release
+        # Pinned to an exact commit (v2.6.2): a tag can be moved, a commit can't.
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
+        with:
+          tag_name: v${{ needs.build.outputs.version }}
+          name: Faders ${{ needs.build.outputs.version }}
           target_commitish: ${{ github.sha }}
-          files: build/Faders.zip
+          files: Faders.zip
           generate_release_notes: true
           make_latest: true

@@ -96,6 +96,37 @@ extension AudioObjectID {
         }
         return status == noErr
     }
+
+    // MARK: Streams
+
+    /// The formats of a device's streams in one direction (input or output), in
+    /// the order a render callback receives them — one `AudioBuffer` per stream.
+    func streamFormats(scope: AudioObjectPropertyScope) -> [AudioStreamBasicDescription] {
+        readArray(kAudioDevicePropertyStreams, scope: scope, defaultValue: AudioStreamID.unknown).map { stream in
+            // The "virtual" format is what callbacks see; the physical one is what
+            // goes over the wire (often integers) and doesn't concern us.
+            stream.read(kAudioStreamPropertyVirtualFormat, defaultValue: AudioStreamBasicDescription())
+                ?? AudioStreamBasicDescription()
+        }
+    }
+}
+
+extension AudioStreamBasicDescription {
+    /// Plain 32-bit float samples: the only format the renderer handles. Core Audio
+    /// uses it for practically every device; the exceptions are things like
+    /// encoded surround passthrough, which we leave alone.
+    var isFloat32: Bool {
+        mFormatID == kAudioFormatLinearPCM
+            && mFormatFlags & kAudioFormatFlagIsFloat != 0
+            && mBitsPerChannel == 32
+    }
+
+    /// For log messages, e.g. "2 ch, 48000 Hz, float32 interleaved".
+    var summary: String {
+        let sampleType = isFloat32 ? "float32" : "unsupported format \(mFormatID)/\(mFormatFlags)/\(mBitsPerChannel) bit"
+        let layout = mFormatFlags & kAudioFormatFlagIsNonInterleaved != 0 ? "non-interleaved" : "interleaved"
+        return "\(mChannelsPerFrame) ch, \(Int(mSampleRate)) Hz, \(sampleType) \(layout)"
+    }
 }
 
 extension AudioObjectPropertyAddress {

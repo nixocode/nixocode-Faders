@@ -6,7 +6,10 @@ import SwiftUI
 /// Info.plist). Clicking the icon opens the mixer panel.
 @main
 struct FadersApp: App {
-    @State private var mixer = MixerModel()
+    // A plain `let`, not `@State`: SwiftUI creates the app once, and in the
+    // macOS 27 SDK `@State` needs a compiler plugin that ships only with Xcode.
+    // Without it, Faders builds with just the Command Line Tools.
+    private let mixer = MixerModel()
 
     var body: some Scene {
         MenuBarExtra("Faders", systemImage: "slider.vertical.3") {
