@@ -57,6 +57,8 @@ To update later: `cd Faders && git pull && ./scripts/install.sh`.
 2. Drag **Faders.app** into your **Applications** folder and open it.
 3. macOS says it can't verify the app, because Faders isn't signed with a paid Apple developer certificate. Click **Done**, then open **System Settings → Privacy & Security**, scroll down and click **Open Anyway** next to Faders. You only do this once.
 
+Every release is built by GitHub Actions from the public source. To check that your download is exactly that build, compare its SHA-256 (`shasum -a 256 Faders.zip`) with the one shown on the release page. From 1.2.0 on you can also run `gh attestation verify Faders.zip -R nixocode/nixocode-Faders` with the [GitHub CLI](https://cli.github.com).
+
 ### First use
 
 Click the three-sliders icon in your menu bar. The first time you turn an app down, macOS asks whether Faders may access other apps' audio (that app stays quiet until you answer). Click **Allow**: that's what lets Faders change an app's level. Because Faders isn't signed with a paid developer certificate, macOS may ask again after you update it.
