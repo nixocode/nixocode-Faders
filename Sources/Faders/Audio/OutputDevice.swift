@@ -4,8 +4,9 @@ import CoreAudio
 /// The speakers or headphones macOS is currently playing through
 /// ("Output" in System Settings → Sound).
 ///
-/// This powers the top "master" slider, the same one the volume keys move.
-struct OutputDevice: Equatable {
+/// This powers the top "master" slider, the same one the volume keys move, and
+/// the menu that switches between outputs.
+struct OutputDevice: Equatable, Identifiable {
     let id: AudioDeviceID
     let name: String
     let uid: String
@@ -23,6 +24,34 @@ struct OutputDevice: Equatable {
 
         let name = id.readString(kAudioObjectPropertyName) ?? "Output"
         return OutputDevice(id: id, name: name, uid: uid)
+    }
+
+    /// Every device macOS can play through, as System Settings → Sound lists
+    /// them: speakers, headphones, AirPods, displays, AirPlay…
+    static func all() -> [OutputDevice] {
+        AudioObjectID.system.readArray(kAudioHardwarePropertyDevices, defaultValue: AudioDeviceID.unknown)
+            .compactMap { id -> OutputDevice? in
+                guard let uid = id.readString(kAudioDevicePropertyDeviceUID) else { return nil }
+                let outputStreams = id.readArray(
+                    kAudioDevicePropertyStreams, scope: kAudioObjectPropertyScopeOutput, defaultValue: AudioStreamID(0)
+                ).count
+                let isHidden = (id.read(kAudioDevicePropertyIsHidden, defaultValue: UInt32(0)) ?? 0) != 0
+                guard isListed(uid: uid, isHidden: isHidden, outputStreams: outputStreams) else { return nil }
+                return OutputDevice(id: id, name: id.readString(kAudioObjectPropertyName) ?? "Output", uid: uid)
+            }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    /// Whether a device belongs in the output menu: it can play sound, macOS
+    /// shows it, and it isn't one of Faders' own (see `AppVolumeTap`).
+    static func isListed(uid: String, isHidden: Bool, outputStreams: Int) -> Bool {
+        outputStreams > 0 && !isHidden && !uid.hasPrefix(AppVolumeTap.aggregateUIDPrefix)
+    }
+
+    /// Makes macOS play through this device, as choosing it in Control Center
+    /// does. The mixer hears about it through its default-device listener.
+    func makeDefault() {
+        AudioObjectID.system.write(kAudioHardwarePropertyDefaultOutputDevice, value: id)
     }
 
     // MARK: Icon
@@ -84,6 +113,16 @@ struct OutputDevice: Equatable {
         }
         nonmutating set {
             id.write(kAudioDevicePropertyMute, scope: kAudioDevicePropertyScopeOutput, value: UInt32(newValue ? 1 : 0))
+        }
+    }
+
+    // MARK: Change notifications
+
+    /// Listeners that fire when this device's volume or mute changes — from the
+    /// volume keys, Control Center or another app. Updates stop when they're released.
+    func observeLevels(_ onChange: @escaping @MainActor () -> Void) -> [PropertyListener] {
+        [kAudioHardwareServiceDeviceProperty_VirtualMainVolume, kAudioDevicePropertyMute].map { selector in
+            PropertyListener(id, selector, scope: kAudioDevicePropertyScopeOutput, onChange: onChange)
         }
     }
 }

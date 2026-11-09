@@ -1,4 +1,3 @@
-import ServiceManagement
 import SwiftUI
 
 /// The panel that drops down from the menu bar icon.
@@ -14,12 +13,27 @@ import SwiftUI
 ///   └─────────────────────────────────┘
 struct MixerView: View {
     @Environment(MixerModel.self) private var mixer
+    /// True exactly while the panel is open: it's the key window then.
+    @Environment(\.appearsActive) private var isOpen
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The row the keyboard is on, if any.
+    @FocusState private var focusedRow: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             header
             MixerSection("Output") { outputRow }
-            MixerSection("Apps") { appList }
+            MixerSection("Apps") {
+                appList
+            } accessory: {
+                if mixer.hiddenAppCount > 0 {
+                    Button("\(mixer.hiddenAppCount) Hidden", action: mixer.showHiddenApps)
+                        .buttonStyle(.borderless)
+                        .controlSize(.small)
+                        .foregroundStyle(.secondary)
+                        .help("Show the apps you hid")
+                }
+            }
             if mixer.permissionProblem { permissionHint }
             Divider().opacity(0.4)
             footer
@@ -27,9 +41,30 @@ struct MixerView: View {
         .padding(16)
         .frame(width: 340)
         // Size the panel to its content, so it shrinks when apps stop playing
-        // (instead of leaving empty glass behind).
+        // (instead of leaving an empty gap behind).
         .fixedSize(horizontal: false, vertical: true)
         .animation(.smooth(duration: 0.25), value: mixer.apps.map(\.id))
+        // Not onAppear/onDisappear: `MenuBarExtra` keeps this view alive between
+        // openings, so they fire once and never, respectively.
+        .onChange(of: isOpen, initial: true) { _, isOpen in
+            mixer.isPanelOpen = isOpen
+            // macOS focuses the first row of a new key window, just after this
+            // runs. Clear that, so the focus ring only shows once someone
+            // actually presses Tab.
+            if isOpen {
+                DispatchQueue.main.async { focusedRow = nil }
+            }
+        }
+        // Rows are focusable so Tab reaches them. That also lets a click on a
+        // row's mute button focus the row, and macOS sometimes focuses the
+        // first row on opening after the line above has run. Like any Mac
+        // control, a row should only show a focus ring when the keyboard put
+        // it there.
+        .onChange(of: focusedRow) { _, row in
+            if row != nil, NSApp.currentEvent?.type != .keyDown {
+                focusedRow = nil
+            }
+        }
     }
 
     // MARK: - Sections
@@ -37,11 +72,11 @@ struct MixerView: View {
     private var header: some View {
         HStack {
             Text("Faders")
-                .font(.system(size: 15, weight: .bold, design: .rounded))
+                .font(.headline)
             Spacer()
             Button("Reset All", action: mixer.resetAll)
                 .buttonStyle(.borderless)
-                .font(.system(size: 11, weight: .medium))
+                .controlSize(.small)
                 .foregroundStyle(.secondary)
                 .disabled(!mixer.hasCustomLevels)
                 .help("Put every app back to 100%")
@@ -52,19 +87,64 @@ struct MixerView: View {
     private var outputRow: some View {
         if let output = mixer.output, output.supportsVolume {
             VolumeRow(
-                title: output.name,
+                name: output.name,
                 volume: Binding(get: { mixer.outputVolume }, set: { mixer.setOutputVolume($0) }),
                 isMuted: mixer.outputMuted,
-                onToggleMute: { mixer.setOutputMuted(!mixer.outputMuted) }
+                onToggleMute: { mixer.setOutputMuted(!mixer.outputMuted) },
+                onEditingChanged: mixer.setAdjustingOutputVolume
             ) {
                 DeviceIcon(symbolName: output.symbolName)
+            } title: {
+                // The name opens a menu of outputs, like Control Center's Sound.
+                Menu {
+                    outputChoices
+                } label: {
+                    // The up-down chevrons say "pop-up menu", as on any Mac.
+                    HStack(spacing: 4) {
+                        Text(output.name)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .accessibilityHidden(true)   // VoiceOver says "pop-up button" already
+                    }
+                    .contentShape(Rectangle())
+                }
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .help("Choose where sound plays")
+            }
+            .focused($focusedRow, equals: "output")
+            .contextMenu {
+                outputChoices
+                Divider()
+                Button(mixer.outputMuted ? "Unmute" : "Mute") { mixer.setOutputMuted(!mixer.outputMuted) }
+                Button("Sound Settings…", action: openSoundSettings)
             }
         } else {
             EmptyMessage(
                 symbol: "speaker.badge.exclamationmark",
                 text: mixer.output.map { "\($0.name) has no volume control" } ?? "No output device"
             )
+            .contextMenu { outputChoices }   // still lets you switch to one that has
         }
+    }
+
+    /// Every output, with a checkmark on the current one.
+    private var outputChoices: some View {
+        Picker("Output", selection: Binding(
+            get: { mixer.output?.uid ?? "" },
+            set: { uid in
+                if let device = mixer.outputDevices.first(where: { $0.uid == uid }) { mixer.selectOutput(device) }
+            }
+        )) {
+            ForEach(mixer.outputDevices) { device in
+                Label(device.name, systemImage: device.symbolName).tag(device.uid)
+            }
+        }
+        .pickerStyle(.inline)
+        .labelsHidden()
     }
 
     @ViewBuilder
@@ -74,18 +154,26 @@ struct MixerView: View {
         } else if mixer.apps.count <= 5 {
             appRows
         } else {
-            // Lots of apps: keep the panel a sensible height and scroll.
+            // Lots of apps: keep the panel a sensible height and scroll, with
+            // the system's scroll bars (shown while scrolling, by default).
             ScrollView { appRows }
-                .scrollIndicators(.never)
-                .frame(height: 360)
+                .softScrollEdges()
+                .frame(height: listHeight)
         }
     }
 
+    /// About five and a half rows, so the cut-off one shows there's more, and
+    /// less on a short screen so the panel always fits.
+    private var listHeight: CGFloat {
+        let screenHeight = NSScreen.main?.visibleFrame.height ?? 900
+        return min(360, max(180, screenHeight - 400))
+    }
+
     private var appRows: some View {
-        GlassGroup {
+        VStack(spacing: 8) {
             ForEach(mixer.apps) { app in
                 VolumeRow(
-                    title: app.name,
+                    name: app.name,
                     volume: Binding(get: { mixer.volume(for: app) }, set: { mixer.setVolume($0, for: app) }),
                     isMuted: mixer.isMuted(app),
                     onToggleMute: { mixer.toggleMute(app) }
@@ -94,7 +182,18 @@ struct MixerView: View {
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                 }
-                .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                .focused($focusedRow, equals: app.id)
+                .contextMenu {
+                    Button(mixer.isMuted(app) ? "Unmute" : "Mute") { mixer.toggleMute(app) }
+                    Button("Reset to 100%") { mixer.reset(app) }
+                        .disabled(!mixer.hasCustomLevel(app))
+                    Divider()
+                    Button("Hide \(app.name)") { mixer.hide(app) }
+                    if mixer.hasHiddenApps {
+                        Button("Show Hidden Apps", action: mixer.showHiddenApps)
+                    }
+                }
+                .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.96)))
             }
         }
     }
@@ -104,8 +203,8 @@ struct MixerView: View {
             // Opens System Settings → Privacy & Security → Screen & System Audio Recording.
             NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AudioCapture")!)
         } label: {
-            Label("Allow Faders to control app audio in System Settings", systemImage: "lock.shield")
-                .font(.system(size: 11))
+            Label("Faders can't hear app audio. Allow it in System Settings, then move the slider again.", systemImage: "lock.shield")
+                .font(.subheadline)
                 .multilineTextAlignment(.leading)
         }
         .buttonStyle(.link)
@@ -113,40 +212,72 @@ struct MixerView: View {
 
     private var footer: some View {
         HStack(spacing: 14) {
-            LaunchAtLoginToggle()
+            Toggle(
+                "Open at Login",
+                isOn: Binding(get: { mixer.opensAtLogin }, set: { mixer.setOpensAtLogin($0) })
+            )
+            .toggleStyle(.switch)
+            .controlSize(.mini)
             Spacer()
-            Button("Sound Settings…") {
-                NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Sound-Settings.extension")!)
-            }
+            Button("Sound Settings…", action: openSoundSettings)
             Button("Quit") { NSApp.terminate(nil) }
                 .keyboardShortcut("q")
         }
         .buttonStyle(.borderless)
-        .font(.system(size: 11))
+        .font(.subheadline)
         .foregroundStyle(.secondary)
+    }
+
+    private func openSoundSettings() {
+        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Sound-Settings.extension")!)
     }
 }
 
 // MARK: - Small building blocks
 
-/// A small caption ("OUTPUT", "APPS") with its content underneath.
-private struct MixerSection<Content: View>: View {
+/// A small-caps caption ("Output", "Apps") with its content underneath, and
+/// optionally a small control at the caption's far end.
+private struct MixerSection<Content: View, Accessory: View>: View {
     let title: String
     @ViewBuilder var content: Content
+    @ViewBuilder var accessory: Accessory
 
-    init(_ title: String, @ViewBuilder content: () -> Content) {
+    init(_ title: String, @ViewBuilder content: () -> Content, @ViewBuilder accessory: () -> Accessory) {
         self.title = title
         self.content = content()
+        self.accessory = accessory()
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title.uppercased())
-                .font(.system(size: 10, weight: .semibold))
-                .tracking(0.6)
-                .foregroundStyle(.secondary)
-                .padding(.leading, 4)
+            HStack(alignment: .firstTextBaseline) {
+                Text(title)
+                    .font(.caption.weight(.semibold).smallCaps())
+                    .foregroundStyle(.secondary)
+                Spacer()
+                accessory
+            }
+            .padding(.horizontal, 4)
             content
+        }
+    }
+}
+
+extension MixerSection where Accessory == EmptyView {
+    init(_ title: String, @ViewBuilder content: () -> Content) {
+        self.init(title, content: content, accessory: { EmptyView() })
+    }
+}
+
+private extension View {
+    /// On macOS 26 and later, rows fade out softly at the list's top and bottom
+    /// edges as they scroll, the system's own scroll edge effect.
+    @ViewBuilder
+    func softScrollEdges() -> some View {
+        if #available(macOS 26.0, *) {
+            scrollEdgeEffectStyle(.soft, for: .vertical)
+        } else {
+            self
         }
     }
 }
@@ -161,7 +292,7 @@ private struct DeviceIcon: View {
             .font(.system(size: 15, weight: .semibold))
             .foregroundStyle(.white)
             .frame(width: 32, height: 32)
-            .background(Color.accentColor.gradient, in: .circle)
+            .background(Color.accentColor, in: .circle)
     }
 }
 
@@ -172,34 +303,11 @@ private struct EmptyMessage: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: symbol).font(.system(size: 15))
-            Text(text).font(.system(size: 12))
+            Text(text).font(.callout)
             Spacer()
         }
         .foregroundStyle(.secondary)
         .padding(12)
-        .glassPlatter()
-    }
-}
-
-/// Uses the modern ServiceManagement API, so Faders appears in
-/// System Settings → General → Login Items like any well-behaved app.
-private struct LaunchAtLoginToggle: View {
-    @State private var isOn = SMAppService.mainApp.status == .enabled
-
-    var body: some View {
-        Toggle("Open at Login", isOn: $isOn)
-            .toggleStyle(.switch)
-            .controlSize(.mini)
-            .onChange(of: isOn) { _, enabled in
-                do {
-                    if enabled {
-                        try SMAppService.mainApp.register()
-                    } else {
-                        try SMAppService.mainApp.unregister()
-                    }
-                } catch {
-                    isOn = SMAppService.mainApp.status == .enabled   // show the real state
-                }
-            }
+        .rowBackground()
     }
 }
